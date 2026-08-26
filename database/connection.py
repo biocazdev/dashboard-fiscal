@@ -151,33 +151,22 @@ _pool_lock = threading.Lock()
 
 
 def _obter_conexao_pymssql():
-    """Retorna uma conexão do pool ou cria uma nova."""
-    with _pool_lock:
-        while _pool_pymssql:
-            conn = _pool_pymssql.popleft()
-            try:
-                if not conn.closed:
-                    return conn
-            except Exception:
-                pass
+    """Cria uma nova conexão pymssql (sem pooling).
+
+    pymssql é puro Python e não tem pooling nativo como o pyodbc. O pooling
+    anterior causava inconsistências de dados (transações pendentes em
+    conexões reaproveitadas). A performance continua boa porque o瓶颈
+    é latência de rede, não handshake TCP.
+    """
     return _PYMSSQL.connect(**_montar_params_pymssql())
 
 
 def _devolver_ao_pool(conn):
-    """Devolve uma conexão ao pool (se não estiver fechada e o pool não estiver cheio)."""
+    """Função mantida por compatibilidade - pymssql não usa pool."""
     try:
-        if conn.closed:
-            return
+        conn.close()
     except Exception:
-        return
-    with _pool_lock:
-        if len(_pool_pymssql) < POOL_MAX_CONEXOES:
-            _pool_pymssql.append(conn)
-        else:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        pass
 
 
 def _montar_connection_string_pyodbc() -> str:
