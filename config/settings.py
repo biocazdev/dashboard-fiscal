@@ -28,15 +28,19 @@ def _get_secret_or_env(name: str, default: str = "") -> str:
 
 
 def _get_bool(name: str, default: bool = False) -> bool:
-    """Lê uma variável de ambiente no formato booleano.
+    """Lê um valor booleano de st.secrets (Streamlit Cloud) ou .env (local).
 
     Variáveis de ambiente são sempre texto (mesmo quando o ``.env`` tem
     ``ALGO=true``, o Python recebe a string ``"true"``, não o bool
     ``True``) - esta função aceita algumas grafias comuns ("1", "true",
     "yes", "sim", sem diferenciar maiúsc./minúsc.) e trata qualquer outra
-    coisa como falso.
+    coisa como falso. Usa ``_get_secret_or_env`` (não ``os.getenv`` direto)
+    para também funcionar quando o valor vem de ``st.secrets`` no Streamlit
+    Cloud - inclusive quando lá o TOML grava um bool nativo (``true``/
+    ``false`` sem aspas): ``_get_secret_or_env`` já converte para texto
+    antes de chegar aqui, então "True"/"False" caem certinho no `.lower()`.
     """
-    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "sim"}
+    return _get_secret_or_env(name, str(default)).strip().lower() in {"1", "true", "yes", "sim"}
 
 
 # ---------------------------------------------------------------------------
@@ -179,12 +183,12 @@ STATUS_CANCELADO_SAIDA: str = _get_secret_or_env("STATUS_CANCELADO_SAIDA")
 # conciliação baixo por um bom tempo sem que isso seja um problema real).
 # % mínimo de conciliação esperado (abaixo disso, aviso). 0.80 = 80%.
 ALERTA_PCT_CONCILIACAO_MIN: float = float(
-    os.getenv("ALERTA_PCT_CONCILIACAO_MIN", "0.80").strip() or "0.80"
+    _get_secret_or_env("ALERTA_PCT_CONCILIACAO_MIN", "0.80").strip() or "0.80"
 )
 # Idade (em dias) a partir da qual uma pendência (não contabilizada ou
 # divergente) é considerada "muito antiga" e gera aviso.
 ALERTA_IDADE_PENDENCIA_DIAS: int = int(
-    os.getenv("ALERTA_IDADE_PENDENCIA_DIAS", "30").strip() or "30"
+    _get_secret_or_env("ALERTA_IDADE_PENDENCIA_DIAS", "30").strip() or "30"
 )
 # Avisa quando o Saldo de ICMS ficar negativo (crédito acumulado). Padrão
 # ligado - desative (false) se isso for normal para o perfil da empresa.
