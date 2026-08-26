@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# Instala driver ODBC para SQL Server
+# Instala driver ODBC para SQL Server (local/Docker)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl gnupg2 unixodbc-dev && \
     curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \

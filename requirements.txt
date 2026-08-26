@@ -1,6 +1,7 @@
 streamlit>=1.30.0
 pandas>=2.0.0
 pyodbc>=5.0.0
+pymssql>=2.3.0
 python-dotenv>=1.0.0
 plotly>=5.15.0
 reportlab>=4.0.0
