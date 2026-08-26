@@ -1,0 +1,18 @@
+services:
+  dashboard-fiscal:
+    build: .
+    container_name: dashboard-fiscal
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./anotacoes.db:/app/anotacoes.db
+      - ./logs:/app/logs
+    networks:
+      - rede-internal
+
+networks:
+  rede-internal:
+    driver: bridge

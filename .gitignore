@@ -1,0 +1,37 @@
+# Credenciais e segredos
+.env
+
+# Logs da aplicacao
+logs/
+
+# Anotacoes locais por documento (dados do usuario, nao do Protheus)
+anotacoes.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Streamlit (secrets nao devem ser versionados)
+.streamlit/secrets.toml
+
+# Sistemas operacionais
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Backup pre-conciliacao
+BKPBIFISCAL/
