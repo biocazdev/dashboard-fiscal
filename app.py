@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
+from config import settings
 from services import (
     alertas_service,
     anotacoes_service,
@@ -996,13 +997,23 @@ with st.sidebar:
             "Filial",
             options=lista_codigos,
             format_func=opcoes_filiais.get,
-            default=lista_codigos[:1],
+            # Como a instalação tem uma empresa única, não faz sentido pedir
+            # para o usuário escolher a filial toda vez: o filtro já abre com
+            # TODAS as filiais marcadas (visão consolidada por padrão). O
+            # usuário ainda pode desmarcar alguma se quiser ver só uma.
+            default=lista_codigos,
             key="filiais",
             help="Selecione mais de uma filial para uma visão consolidada.",
         )
     else:
+        # Quando o SM0 não está disponível/acessível, cai aqui (campo livre
+        # em vez de multiselect). Como essa instalação tem uma única
+        # filial, o campo já vem preenchido com ela (FILIAL_PADRAO no
+        # .env) - o usuário não precisa digitar o código toda vez que abre
+        # o dashboard, mas ainda pode apagar/trocar se precisar.
         filiais_texto = st.text_input(
-            "Filial (código, opcional - separe várias por vírgula)"
+            "Filial (código, opcional - separe várias por vírgula)",
+            value=settings.FILIAL_PADRAO,
         ).strip()
         filiais_selecionadas = [f.strip() for f in filiais_texto.split(",") if f.strip()]
 

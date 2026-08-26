@@ -19,7 +19,11 @@ import pandas as pd
 
 from config import settings
 from database import queries
-from database.connection import DatabaseConnectionError, get_connection
+from database.connection import (
+    DatabaseConnectionError,
+    adaptar_placeholders,
+    get_connection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +80,11 @@ def _ler_sql(sql: str, params: list[Any], rotulo: str = "") -> pd.DataFrame:
     inicio = time.perf_counter()
     connection = get_connection()
     try:
-        return pd.read_sql(sql, connection, params=params)
+        # Todo o SQL deste projeto é escrito com placeholders "?" (estilo
+        # pyodbc) - adaptar_placeholders() converte para "%s" quando o
+        # driver ativo é o pymssql, que não entende "?" (ver
+        # database/connection.py para o motivo completo).
+        return pd.read_sql(adaptar_placeholders(sql), connection, params=params)
     finally:
         connection.close()
         duracao = time.perf_counter() - inicio

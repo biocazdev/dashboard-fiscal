@@ -49,7 +49,14 @@ DB_SERVER: str = _get_secret_or_env("DB_SERVER")
 DB_DATABASE: str = _get_secret_or_env("DB_DATABASE")
 DB_USER: str = _get_secret_or_env("DB_USER")
 DB_PASSWORD: str = _get_secret_or_env("DB_PASSWORD")
+# Nome do driver ODBC instalado na máquina (Painel de Controle > Fontes de
+# Dados ODBC, aba "Drivers", no Windows). Precisa bater exatamente com o
+# nome do driver instalado - "ODBC Driver 18 for SQL Server" é o mais comum
+# hoje em dia, mas instalações mais antigas podem ter só o 17 ou o 13.
 DB_DRIVER: str = _get_secret_or_env("DB_DRIVER", "ODBC Driver 18 for SQL Server")
+# Tempo máximo (segundos) que uma consulta pode rodar antes do pyodbc
+# desistir e estourar erro - evita que uma consulta pesada trave o
+# dashboard indefinidamente.
 DB_TIMEOUT: int = int(_get_secret_or_env("DB_TIMEOUT", "15") or "15")
 
 # ---------------------------------------------------------------------------
@@ -58,9 +65,18 @@ DB_TIMEOUT: int = int(_get_secret_or_env("DB_TIMEOUT", "15") or "15")
 # TODO: Validar o sufixo das tabelas físicas na instalação (SX3/dicionário).
 TABELA_NF_ENTRADA: str = _get_secret_or_env("TABELA_NF_ENTRADA", "SF1010")
 TABELA_NF_SAIDA: str = _get_secret_or_env("TABELA_NF_SAIDA", "SF2010")
+# SM0 concentra empresas e filiais (M0_CODIGO / M0_CODFIL).
 TABELA_EMPRESAS: str = _get_secret_or_env("TABELA_EMPRESAS", "SM0010")
+# Cadastros de parceiros (nome/descrição de clientes e fornecedores).
+# SA1 = clientes, SA2 = fornecedores (padrão TOTVS).
 TABELA_CLIENTES: str = _get_secret_or_env("TABELA_CLIENTES", "SA1010")
 TABELA_FORNECEDORES: str = _get_secret_or_env("TABELA_FORNECEDORES", "SA2010")
+
+# Filial padrão a pré-preencher no filtro da sidebar quando a lista de
+# filiais não puder ser consultada no SM0 (instalação com empresa/filial
+# única - não faz sentido pedir para o usuário digitar o código toda vez
+# que abre o dashboard). Deixe vazio para não pré-preencher nada.
+FILIAL_PADRAO: str = _get_secret_or_env("FILIAL_PADRAO", "010101")
 
 # ---------------------------------------------------------------------------
 # IBS/CBS (reforma tributária) - calculados pelo Configurador de Tributos
@@ -107,9 +123,21 @@ CT2_EXIGIR_PARCEIRO: bool = _get_bool("CT2_EXIGIR_PARCEIRO", True)
 # data e valor bateram nos 5 casos. Ainda NÃO validado para notas de entrada
 # (nenhum lançamento de entrada testado até agora).
 CT2_DOC_VIA_KEY: bool = _get_bool("CT2_DOC_VIA_KEY", False)
+# Restringe o vínculo via CT2_KEY às linhas cuja CT2_ROTINA esteja nesta
+# lista (separados por vírgula; vazio = qualquer rotina). Reduz o risco de
+# interpretar o CT2_KEY de um lançamento de outra origem/rotina (que pode
+# ter um formato de KEY diferente) como se fosse filial+documento+série.
+# CT2_ROTINA_SAIDA=MATA460 está validado (ver CT2_DOC_VIA_KEY acima).
+# CT2_ROTINA_ENTRADA ainda não foi validado - preencher quando houver um
+# lançamento de entrada real pra conferir o CT2_ROTINA correspondente.
 CT2_ROTINA_SAIDA: str = _get_secret_or_env("CT2_ROTINA_SAIDA")
 CT2_ROTINA_ENTRADA: str = _get_secret_or_env("CT2_ROTINA_ENTRADA")
+# Tolerância (valor absoluto) para considerar um documento CONCILIADO.
 TOLERANCIA_CONCILIACAO: str = _get_secret_or_env("TOLERANCIA_CONCILIACAO", "0.05")
+# Rótulos legíveis para o código de CT2_ORIGEM, exibidos na tela em vez do
+# código cru (ex.: "SE1" -> "Contas a Receber"). Formato: "CODIGO:Rótulo"
+# separados por vírgula. Código sem rótulo mapeado continua aparecendo cru.
+# Ex.: CT2_ORIGEM_ROTULOS=SE1:Contas a Receber,SE2:Contas a Pagar,MATA460:Faturamento
 CT2_ORIGEM_ROTULOS: str = _get_secret_or_env("CT2_ORIGEM_ROTULOS")
 
 # ---------------------------------------------------------------------------

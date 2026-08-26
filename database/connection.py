@@ -46,6 +46,71 @@ def _try_pyodbc():
 _PYMSSQL = _try_pymssql()
 _PYODBC = _try_pyodbc()
 
+# Estilo de placeholder de parâmetro esperado pela consulta SQL: pyodbc usa
+# "?" (qmark) - é o estilo em que TODO o SQL deste projeto é escrito
+# (database/queries.py, database/conciliacao_queries.py). O driver pymssql
+# (usado no Streamlit Community Cloud, que não tem driver ODBC instalado)
+# NÃO entende "?" como placeholder - ele espera o estilo "%s" (formatação
+# Python) e, se receber "?" no texto do SQL, simplesmente manda o "?"
+# literal para o SQL Server, que rejeita com "Incorrect syntax near '?'".
+# Em vez de reescrever centenas de placeholders nos dois arquivos de
+# consultas, a tradução acontece uma única vez, na hora de executar cada
+# consulta (ver ``adaptar_placeholders()`` abaixo, usado em
+# ``services/fiscal_service.py::_ler_sql()`` - único ponto do projeto que
+# roda SQL contra o banco).
+USANDO_PYMSSQL: bool = _PYMSSQL is not None
+
+
+def adaptar_placeholders(sql: str) -> str:
+    """Converte os placeholders "?" do SQL para o estilo que o driver ativo espera.
+
+    Com pyodbc, "?" já é o formato nativo - o SQL volta sem alteração. Com
+    pymssql, cada "?" vira "%s". A troca por substituição de texto simples
+    é segura aqui porque: (1) nenhuma consulta deste projeto usa "?" fora
+    de posição de parâmetro (não há "?" solto em comentário ou texto
+    dentro das strings SQL_*); e (2) não existe nenhum "%" literal escrito
+    no texto de nenhuma consulta - os curingas de LIKE (ex. "01%") sempre
+    vêm como VALOR de parâmetro vindo do Python, nunca escritos direto no
+    SQL, então não há risco de colisão com a formatação "%s" do pymssql.
+    """
+    return sql.replace("?", "%s") if USANDO_PYMSSQL else sql
+
+
+def _parse_server_pymssql(valor: str) -> tuple[str, int | None]:
+    """Converte DB_SERVER do formato pyodbc para (host, porta) do pymssql.
+
+    ``DB_SERVER`` neste projeto é configurado no formato que o pyodbc
+    espera dentro da connection string - ex.: ``tcp:181.41.163.164,10522``
+    (prefixo "tcp:" + host + porta separada por VÍRGULA). O pymssql NÃO
+    entende esse formato como uma string única: se você passar
+    ``server="tcp:181.41.163.164,10522"`` direto para ``pymssql.connect()``,
+    ele tenta resolver isso como se fosse um hostname literal (com "tcp:" e
+    vírgula incluídos) e a conexão falha sempre, mesmo com credenciais
+    corretas e o servidor no ar - foi exatamente esse bug que quebrou a
+    conexão ao adicionar o pymssql como driver alternativo (para rodar no
+    Streamlit Community Cloud, que não tem driver ODBC instalado).
+
+    Por isso aqui host e porta são separados manualmente e passados como
+    parâmetros distintos para o pymssql (que aceita ``server``/``port``
+    separados, ou ``host:porta`` com dois-pontos - nunca vírgula).
+    """
+    texto = (valor or "").strip()
+    if texto.lower().startswith("tcp:"):
+        texto = texto[4:]
+    # pyodbc usa vírgula (host,porta); por segurança também aceitamos
+    # dois-pontos (host:porta), caso o .env seja preenchido nesse formato.
+    separador = "," if "," in texto else (":" if ":" in texto else None)
+    if separador is None:
+        return texto, None
+    host, porta_texto = texto.split(separador, 1)
+    try:
+        porta = int(porta_texto.strip())
+    except ValueError:
+        # Porta em formato inesperado - melhor deixar o pymssql usar a
+        # porta padrão (1433) do que quebrar aqui com um erro confuso.
+        porta = None
+    return host.strip(), porta
+
 
 def _montar_params_pymssql() -> dict:
     """Monta os parâmetros de conexão para pymssql."""
@@ -55,14 +120,17 @@ def _montar_params_pymssql() -> dict:
             "Verifique as variáveis de ambiente ou st.secrets "
             "(DB_SERVER/DB_DATABASE)."
         )
+    host, porta = _parse_server_pymssql(settings.DB_SERVER)
     params: dict = {
-        "server": settings.DB_SERVER,
+        "server": host,
         "database": settings.DB_DATABASE,
         "user": settings.DB_USER,
         "password": settings.DB_PASSWORD,
         "timeout": settings.DB_TIMEOUT,
         "login_timeout": settings.DB_TIMEOUT,
     }
+    if porta:
+        params["port"] = porta
     return params
 
 
