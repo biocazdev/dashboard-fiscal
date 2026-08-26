@@ -15,6 +15,8 @@ Segurança (seção 25 da especificação):
 """
 
 import logging
+import threading
+from collections import deque
 
 from config import settings
 
@@ -134,6 +136,50 @@ def _montar_params_pymssql() -> dict:
     return params
 
 
+# ---------------------------------------------------------------------------
+# Connection pool para pymssql (que NÃO tem pooling automático)
+# ---------------------------------------------------------------------------
+# pymssql não retorna conexões a um pool como o pyodbc faz via ODBC Driver
+# Manager. Sem pooling, cada chamada a _ler_sql abre e fecha uma conexão TCP
+# ao SQL Server (~50-200ms de handshake por query). Este pool simples mantém
+# até POOL_MAX_CONEXOES conexões vivas entre chamadas, reutilizando-as via
+# fila thread-safe. pyodbc já tem pooling nativo, então este código só é
+# ativo quando USANDO_PYMSSQL é True.
+POOL_MAX_CONEXOES = 5
+_pool_pymssql: deque = deque()
+_pool_lock = threading.Lock()
+
+
+def _obter_conexao_pymssql():
+    """Retorna uma conexão do pool ou cria uma nova."""
+    with _pool_lock:
+        while _pool_pymssql:
+            conn = _pool_pymssql.popleft()
+            try:
+                if not conn.closed:
+                    return conn
+            except Exception:
+                pass
+    return _PYMSSQL.connect(**_montar_params_pymssql())
+
+
+def _devolver_ao_pool(conn):
+    """Devolve uma conexão ao pool (se não estiver fechada e o pool não estiver cheio)."""
+    try:
+        if conn.closed:
+            return
+    except Exception:
+        return
+    with _pool_lock:
+        if len(_pool_pymssql) < POOL_MAX_CONEXOES:
+            _pool_pymssql.append(conn)
+        else:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _montar_connection_string_pyodbc() -> str:
     """Monta a connection string ODBC a partir das configurações."""
     if not settings.DB_SERVER or not settings.DB_DATABASE:
@@ -155,6 +201,7 @@ def get_connection():
     """Abre e retorna uma conexão com o SQL Server.
 
     Tenta pymssql primeiro (cloud), depois pyodbc (local/Docker).
+    Para pymssql, reutiliza conexões do pool para evitar overhead de TCP.
 
     Raises:
         DatabaseConnectionError: quando a conexão não puder ser estabelecida.
@@ -162,8 +209,7 @@ def get_connection():
     # 1) pymssql (Streamlit Cloud e ambientes sem ODBC driver)
     if _PYMSSQL is not None:
         try:
-            params = _montar_params_pymssql()
-            return _PYMSSQL.connect(**params)
+            return _obter_conexao_pymssql()
         except Exception as exc:
             logger.error(
                 "Falha ao conectar via pymssql (server=%s, database=%s).",
@@ -198,3 +244,17 @@ def get_connection():
         "Nenhum driver de banco disponível. "
         "Instale pymssql (pip install pymssql) ou pyodbc (pip install pyodbc)."
     )
+
+
+def release_connection(conn):
+    """Devolve uma conexão ao pool (pymssql) ou fecha (pyodbc).
+
+    Chame esta função em vez de conn.close() quando a consulta terminar.
+    """
+    if _PYMSSQL is not None and not getattr(conn, '_is_pyodbc', False):
+        _devolver_ao_pool(conn)
+    else:
+        try:
+            conn.close()
+        except Exception:
+            pass

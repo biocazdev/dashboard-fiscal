@@ -51,6 +51,14 @@ TABELA_FINANCEIRO - para o histórico completo):
       Confirmado com o título NFS58-01 (fornecedor 000316): os 4 valores
       retidos (E2_IRRF=184,62/E2_PIS=80/E2_COFINS=369,24/E2_CSLL=123,08)
       batem exatamente com TG0000002/TG0000004/TG0000005/TG0000003.
+
+    ISS Retido incluído em 26/08/2026 (a pedido do cliente), nos dois
+    padrões acima (E2_NATUREZ/E2_TIPO='ISS', valor em E2_ISS). AINDA NÃO
+    confirmado ao vivo nesta instalação - E2_ISS é o nome padrão do
+    dicionário Protheus para retenção de ISS, por analogia aos outros 4
+    campos (E2_IRRF/E2_PIS/E2_COFINS/E2_CSLL), mas não foi testado contra
+    um título real com ISS retido. Se os valores não baterem, confirmar o
+    nome do campo primeiro.
 """
 
 import logging
@@ -83,7 +91,7 @@ _COLUNAS_VAZIO = [
 _COLUNAS_VAZIO_VALIDACAO = [
     "FILIAL", "DOCUMENTO", "FORNECEDOR", "NOME_FORNECEDOR",
     "EMISSAO", "VENCIMENTO", "BAIXA",
-    "VALOR_TITULO", "VALOR_RETIDO", "VALOR_LIQUIDO_ESPERADO",
+    "VALOR_TITULO", "VALOR_ISS", "VALOR_RETIDO", "VALOR_LIQUIDO_ESPERADO",
     "QTD_TITULOS_RETENCAO", "VALOR_GERADO_FINANCEIRO", "QTD_BAIXADOS",
     "DATA_ULTIMA_BAIXA", "DIFERENCA", "STATUS",
 ]
@@ -241,15 +249,20 @@ def buscar_validacao_financeiro(
 ) -> pd.DataFrame:
     """Valida se cada retenção de um título já foi gerada no Financeiro.
 
-    Mesmo filtro de título da aba "Retenções" (SE2010, com pelo menos uma
-    retenção de IR/PIS/COFINS/CSLL diferente de zero). Para cada título,
-    procura na própria SE2010 o(s) título(s) "irmão(s)" de taxa
-    (E2_TIPO='TX', mesmo FILIAL+PREFIXO+NÚMERO, E2_NATUREZ em
-    IRF/PIS/COF/CSL) e soma o que foi encontrado/baixado.
+    Título com pelo menos uma retenção (IR/PIS/COFINS/CSLL ou ISS)
+    diferente de zero. Para cada título, procura na própria SE2010 o(s)
+    título(s) "irmão(s)" de taxa (E2_TIPO='TX', mesmo
+    FILIAL+PREFIXO+NÚMERO, E2_NATUREZ em IRF/PIS/COF/CSL/ISS) e soma o
+    que foi encontrado/baixado. Nota: o escopo desta validação é mais
+    amplo que o da aba "Retenções" (que segue estritamente o Reinf
+    R-4020, só IR/PIS/COFINS/CSLL) - ISS foi incluído aqui a pedido do
+    cliente em 26/08/2026, ver módulo settings.py/queries.py para a
+    ressalva sobre o campo E2_ISS ainda não confirmado.
 
     Colunas: FILIAL, DOCUMENTO, FORNECEDOR, NOME_FORNECEDOR, EMISSAO,
     VENCIMENTO, BAIXA (do título original, informativo),
-    VALOR_TITULO, VALOR_RETIDO, VALOR_LIQUIDO_ESPERADO,
+    VALOR_TITULO, VALOR_ISS (só o ISS, exposto à parte além de já entrar
+    no somatório de VALOR_RETIDO), VALOR_RETIDO, VALOR_LIQUIDO_ESPERADO,
     QTD_TITULOS_RETENCAO, VALOR_GERADO_FINANCEIRO, QTD_BAIXADOS,
     DATA_ULTIMA_BAIXA, DIFERENCA, STATUS
     ("🔴 Não gerado" / "🟡 Divergente" / "🔵 Aguardando baixa" / "🟢 OK").
@@ -281,7 +294,7 @@ def buscar_validacao_financeiro(
         return pd.DataFrame(columns=_COLUNAS_VAZIO_VALIDACAO)
 
     df = df.copy()
-    for coluna in ("VALOR_TITULO", "VALOR_RETIDO", "VALOR_GERADO_FINANCEIRO"):
+    for coluna in ("VALOR_TITULO", "VALOR_ISS", "VALOR_RETIDO", "VALOR_GERADO_FINANCEIRO"):
         df[coluna] = df[coluna].map(_as_float)
     # Contagens (COUNT do SQL) podem vir None quando não há nenhum título
     # "irmão" de taxa - trata como 0 em vez de deixar NaN no DataFrame.

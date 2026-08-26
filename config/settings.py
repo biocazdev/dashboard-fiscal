@@ -285,6 +285,14 @@ RETENCAO_NATUREZA_CODRET: str = _get_secret_or_env("RETENCAO_NATUREZA_CODRET")
 # somar retenções de parcelas diferentes juntas) e se o formato do texto
 # do Histórico (Padrão B) é realmente constante em toda a base histórica
 # (só foi confirmado nos títulos testados ao vivo em 25/08/2026).
+#
+# ISS Retido (26/08/2026): incluído nos dois padrões a pedido do cliente
+# (E2_NATUREZ/E2_TIPO='ISS', valor em E2_ISS no título original). AINDA
+# NÃO CONFIRMADO ao vivo nesta instalação, diferente dos outros 4
+# tributos (IR/PIS/COFINS/CSLL) - "E2_ISS" é só o nome padrão do
+# dicionário Protheus para essa retenção, usado por analogia. Vale
+# confirmar com uma consulta direta (SELECT E2_NUM, E2_ISS FROM SE2010
+# WHERE E2_ISS <> 0) assim que houver um título real com ISS retido.
 TABELA_FINANCEIRO: str = _get_secret_or_env("TABELA_FINANCEIRO", "SEF010")
 """Não usada mais pela validação Retenções x Financeiro (ver comentário
 acima) - mantida apenas por compatibilidade com .env já configurados."""

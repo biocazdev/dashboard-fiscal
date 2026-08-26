@@ -1203,11 +1203,20 @@ SELECT
     SE2.E2_VENCTO                                                AS VENCIMENTO,
     SE2.E2_BAIXA                                                 AS BAIXA,
     ISNULL(SE2.E2_VALOR, 0)                                      AS VALOR_TITULO,
-    -- Total retido do título original, somando os 4 tributos - comparado
+    -- ISS exposto também em coluna própria (além de entrar no somatório
+    -- abaixo) porque foi pedido explicitamente para aparecer separado na
+    -- tela, não só diluído no total - ver ressalva sobre E2_ISS logo
+    -- abaixo (nome de campo ainda não confirmado ao vivo).
+    ISNULL(SE2.E2_ISS, 0)                                        AS VALOR_ISS,
+    -- Total retido do título original, somando os tributos - comparado
     -- com VALOR_GERADO_FINANCEIRO abaixo para checar se o que foi retido
     -- na nota bate com o que de fato virou título(s) de taxa na SE2010.
+    -- E2_ISS incluído em 26/08/2026 a pedido do cliente (ver settings.py -
+    -- TABELA_FINANCEIRO - para a ressalva: nome de campo AINDA NÃO
+    -- confirmado ao vivo nesta instalação, diferente dos outros 4 campos).
     ISNULL(SE2.E2_IRRF, 0) + ISNULL(SE2.E2_PIS, 0)
-        + ISNULL(SE2.E2_COFINS, 0) + ISNULL(SE2.E2_CSLL, 0)      AS VALOR_RETIDO,
+        + ISNULL(SE2.E2_COFINS, 0) + ISNULL(SE2.E2_CSLL, 0)
+        + ISNULL(SE2.E2_ISS, 0)                                  AS VALOR_RETIDO,
     ISNULL(TX.QTD_TITULOS_RETENCAO, 0)                           AS QTD_TITULOS_RETENCAO,
     ISNULL(TX.VALOR_GERADO_FINANCEIRO, 0)                        AS VALOR_GERADO_FINANCEIRO,
     ISNULL(TX.QTD_BAIXADOS, 0)                                   AS QTD_BAIXADOS,
@@ -1242,7 +1251,7 @@ OUTER APPLY (
           AND RTRIM(TX2.E2_FILIAL) = RTRIM(SE2.E2_FILIAL)
           AND RTRIM(TX2.E2_PREFIXO) = RTRIM(SE2.E2_PREFIXO)
           AND RTRIM(TX2.E2_NUM) = RTRIM(SE2.E2_NUM)
-          AND RTRIM(TX2.E2_NATUREZ) IN ('IRF', 'PIS', 'COF', 'CSL')
+          AND RTRIM(TX2.E2_NATUREZ) IN ('IRF', 'PIS', 'COF', 'CSL', 'ISS')
 
         UNION ALL
 
@@ -1254,7 +1263,7 @@ OUTER APPLY (
         SELECT TX3.E2_VALOR, TX3.E2_BAIXA
         FROM {TABELA_CP} TX3
         WHERE TX3.D_E_L_E_T_ = ''
-          AND TX3.E2_TIPO IN ('IRF', 'PIS', 'COF', 'CSL')
+          AND TX3.E2_TIPO IN ('IRF', 'PIS', 'COF', 'CSL', 'ISS')
           AND RTRIM(TX3.E2_FILIAL) = RTRIM(SE2.E2_FILIAL)
           -- Os dois CHARINDEX abaixo são guarda: só tenta fazer o parsing
           -- do histórico se ele realmente contiver "NF: " seguido de " / "
@@ -1295,6 +1304,7 @@ WHERE SE2.D_E_L_E_T_ = ''
      OR ISNULL(SE2.E2_PIS, 0) <> 0
      OR ISNULL(SE2.E2_COFINS, 0) <> 0
      OR ISNULL(SE2.E2_CSLL, 0) <> 0
+     OR ISNULL(SE2.E2_ISS, 0) <> 0
   )
 ORDER BY SE2.E2_EMISSAO, SE2.E2_FORNECE, DOCUMENTO
 """
@@ -1319,6 +1329,15 @@ def sql_validacao_financeiro_retencoes(
       campo estruturado de vínculo nesta instalação (E2_ORIGEM só grava
       a rotina que gerou o título, ex. "MATA100"; E2_DOCHAB e
       E2_NFELETR vêm em branco).
+
+    Cobre IR/PIS/COFINS/CSLL e, desde 26/08/2026, também ISS Retido
+    (E2_NATUREZ/E2_TIPO='ISS', valor em E2_ISS no título original) - a
+    pedido do cliente. IMPORTANTE: diferente dos outros 4 tributos, o
+    nome de campo E2_ISS/E2_NATUREZ='ISS' segue apenas a convenção padrão
+    do dicionário Protheus - AINDA NÃO foi confirmado ao vivo nesta
+    instalação (ver settings.py, seção TABELA_FINANCEIRO). Se a coluna
+    "Valor Retido" não bater com o ISS reconhecido pelo cliente, o nome
+    do campo é o primeiro lugar a conferir.
     """
     filiais_sql, params = _in_clause("SE2.E2_FILIAL", filiais)
     filtro = "AND SE2.E2_FORNECE = ?" if fornecedor else ""

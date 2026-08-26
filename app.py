@@ -24,6 +24,7 @@ from services import (
     qualidade_service,
     retencao_service,
 )
+from database.connection import DatabaseConnectionError
 from services.conciliacao_service import StatusConciliacao
 from utils.formatters import data_brasil, moeda, quantidade
 from utils.logger import configurar_logger
@@ -749,7 +750,7 @@ def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
             selecao = st.dataframe(
                 df_exibir,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 on_select="rerun",
                 selection_mode="single-row",
                 key="tabela_conciliacao",
@@ -819,13 +820,13 @@ def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
 
         if not duplicadas.empty:
             st.markdown("**Notas duplicadas** (mesma filial + tipo + documento + série):")
-            st.dataframe(duplicadas, hide_index=True, use_container_width=True)
+            st.dataframe(duplicadas, hide_index=True, width="stretch")
         if not invalidas.empty:
             st.markdown("**Notas com valor zerado ou negativo:**")
-            st.dataframe(invalidas, hide_index=True, use_container_width=True)
+            st.dataframe(invalidas, hide_index=True, width="stretch")
         if not lotes.empty:
             st.markdown("**Lotes contábeis (CT2) com saldo diferente de zero:**")
-            st.dataframe(lotes, hide_index=True, use_container_width=True)
+            st.dataframe(lotes, hide_index=True, width="stretch")
         if duplicadas.empty and invalidas.empty and lotes.empty:
             st.success("Nenhum problema encontrado nas checagens disponíveis.")
 
@@ -839,7 +840,7 @@ def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
             st.dataframe(
                 _status_docs.rename(columns={"TIPO": "Tipo", "STATUS": "Status", "QTD": "Qtd."}),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("Sem notas no período para levantar a distribuição de status.")
@@ -858,7 +859,7 @@ def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
         # como um filtro "drill-down" para a tabela de documentos abaixo.
         _sel = st.plotly_chart(
             _grafico_por_periodo(por_periodo),
-            use_container_width=True,
+            width="stretch",
             on_select="rerun",
             key="grafico_conciliacao",
         )
@@ -922,7 +923,7 @@ def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
                         }
                     ),
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                     column_config={
                         "Status": st.column_config.TextColumn("Status"),
                         "Valor Fiscal": st.column_config.NumberColumn(
@@ -959,10 +960,30 @@ def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
 # Streamlit, o que é usado abaixo para detectar mudança de filial e limpar
 # filtros que dependiam da filial anterior.
 with st.sidebar:
-    st.image("logo.png", use_container_width=True)
+    st.image("logo.png", width="stretch")
 
     st.header("Filtros")
     st.caption("Período baseado na data de emissão das notas.")
+
+    # Contador usado para "carimbar" a key dos widgets de filtro abaixo
+    # (filiais/fornecedor/cliente/tipo_nfe/datas). Só apagar a chave do
+    # session_state e chamar st.rerun() - como o botão "Limpar filtros"
+    # fazia antes - nem sempre é suficiente para resetar visualmente um
+    # st.selectbox/st.multiselect: é uma limitação conhecida do Streamlit,
+    # onde o componente correspondente no navegador pode continuar
+    # "lembrando" o valor selecionado mesmo depois do backend esquecê-lo
+    # (foi o caso relatado em 26/08/2026: o Fornecedor continuava
+    # mostrando o valor antigo depois de clicar em "Limpar filtros").
+    # A solução é trocar a KEY do widget (não só o valor) para uma nova a
+    # cada reset - isso força o Streamlit a tratá-lo como um widget novo e
+    # recriá-lo do zero, já com o valor padrão. "_reset_seq" é esse
+    # contador: incrementa a cada clique em "Limpar filtros", e cada
+    # widget de filtro usa `_chave_filtro("nome")` (que embute o contador
+    # atual) como sua key.
+    _reset_seq = st.session_state.setdefault("_reset_seq", 0)
+
+    def _chave_filtro(nome: str) -> str:
+        return f"{nome}_{_reset_seq}"
 
     # Empresa (seção 31)
     try:
@@ -987,11 +1008,12 @@ with st.sidebar:
             for codigo, nome in filiais_disponiveis
         }
         lista_codigos = list(opcoes_filiais.keys())
+        _chave_filiais = _chave_filtro("filiais")
         # Evita erro do multiselect se a filial salva em sessão não existir
         # mais nas opções atuais (ex.: usuário trocou de empresa).
-        if "filiais" in st.session_state:
-            st.session_state["filiais"] = [
-                f for f in st.session_state["filiais"] if f in lista_codigos
+        if _chave_filiais in st.session_state:
+            st.session_state[_chave_filiais] = [
+                f for f in st.session_state[_chave_filiais] if f in lista_codigos
             ]
         filiais_selecionadas = st.multiselect(
             "Filial",
@@ -1002,7 +1024,7 @@ with st.sidebar:
             # TODAS as filiais marcadas (visão consolidada por padrão). O
             # usuário ainda pode desmarcar alguma se quiser ver só uma.
             default=lista_codigos,
-            key="filiais",
+            key=_chave_filiais,
             help="Selecione mais de uma filial para uma visão consolidada.",
         )
     else:
@@ -1026,10 +1048,10 @@ with st.sidebar:
     # de controle em session_state (não um widget) só para lembrar, entre um
     # rerun e outro, qual era a seleção de filial da última vez.
     if st.session_state.get("_filiais_anterior") != _filiais_atual:
-        st.session_state.pop("data_inicial", None)
-        st.session_state.pop("data_final", None)
-        st.session_state.pop("fornecedor", None)
-        st.session_state.pop("cliente", None)
+        st.session_state.pop(_chave_filtro("data_inicial"), None)
+        st.session_state.pop(_chave_filtro("data_final"), None)
+        st.session_state.pop(_chave_filtro("fornecedor"), None)
+        st.session_state.pop(_chave_filtro("cliente"), None)
         st.session_state["_filiais_anterior"] = _filiais_atual
 
     # Fornecedor (filtra as notas de entrada por F1_FORNECE)
@@ -1048,7 +1070,7 @@ with st.sidebar:
             rotulo_fornecedor = st.selectbox(
                 "Fornecedor",
                 options=list(opcoes_fornecedores.keys()),
-                key="fornecedor",
+                key=_chave_filtro("fornecedor"),
             )
             fornecedor = opcoes_fornecedores[rotulo_fornecedor]
         else:
@@ -1071,7 +1093,7 @@ with st.sidebar:
             rotulo_cliente = st.selectbox(
                 "Cliente",
                 options=list(opcoes_clientes.keys()),
-                key="cliente",
+                key=_chave_filtro("cliente"),
             )
             cliente = opcoes_clientes[rotulo_cliente]
         else:
@@ -1082,9 +1104,28 @@ with st.sidebar:
     tipo_nfe = st.selectbox(
         "Tipo de NF-e",
         options=["Todos", "Entrada", "Saída"],
-        key="tipo_nfe",
+        key=_chave_filtro("tipo_nfe"),
     )
     tipo_nfe_param = None if tipo_nfe == "Todos" else tipo_nfe
+    # Auto-restringe o tipo de NF-e quando o usuário deixou "Tipo de NF-e"
+    # em "Todos" mas só preencheu um dos dois filtros de parceiro:
+    # Fornecedor só existe em ENTRADA (F1_FORNECE) e Cliente só existe em
+    # SAÍDA (F2_CLIENTE) - sem essa restrição, filtrar por um Fornecedor
+    # (sem Cliente) filtrava só as entradas, mas continuava trazendo TODAS
+    # as saídas do período (de qualquer cliente) nos cards/detalhamento,
+    # parecendo um filtro "quebrado" (reportado pelo usuário em
+    # 26/08/2026: selecionar o fornecedor "Biota" ainda mostrava notas de
+    # saída de outros parceiros). Só entra em ação quando "Tipo de NF-e"
+    # está no padrão "Todos" - uma escolha explícita do usuário no combo
+    # nunca é sobrescrita.
+    _tipo_nfe_auto = False
+    if tipo_nfe_param is None:
+        if fornecedor and not cliente:
+            tipo_nfe_param = "Entrada"
+            _tipo_nfe_auto = True
+        elif cliente and not fornecedor:
+            tipo_nfe_param = "Saída"
+            _tipo_nfe_auto = True
 
     # Período: datas disponíveis no banco para as filiais selecionadas
     hoje = date.today()
@@ -1116,10 +1157,11 @@ with st.sidebar:
     # em session_state entre reruns; se o usuário trocou de filial/empresa
     # e o período disponível no banco mudou, a data antiga poderia ficar
     # fora dos novos limites min/max e o widget quebraria.
-    for _chave, _padrao, _chk_min, _chk_max in (
+    for _nome, _padrao, _chk_min, _chk_max in (
         ("data_inicial", data_inicial_padrao, None, hoje),
         ("data_final", data_final_padrao, data_inicial_padrao, hoje),
     ):
+        _chave = _chave_filtro(_nome)
         if _chave in st.session_state:
             _val = st.session_state[_chave]
             if (_chk_min is not None and _val < _chk_min) or _val > _chk_max:
@@ -1130,7 +1172,7 @@ with st.sidebar:
         value=data_inicial_padrao,
         max_value=hoje,
         format="DD/MM/YYYY",
-        key="data_inicial",
+        key=_chave_filtro("data_inicial"),
     )
     data_final = st.date_input(
         "Data final",
@@ -1138,10 +1180,10 @@ with st.sidebar:
         min_value=data_inicial,
         max_value=hoje,
         format="DD/MM/YYYY",
-        key="data_final",
+        key=_chave_filtro("data_final"),
     )
 
-    atualizar = st.button("Atualizar", type="primary", use_container_width=True)
+    atualizar = st.button("Atualizar", type="primary", width="stretch")
 
     if atualizar:
         # Força a releitura do banco mesmo dentro do TTL do cache - útil
@@ -1150,7 +1192,7 @@ with st.sidebar:
         st.cache_data.clear()
         st.session_state.pop("pdf_pronto", None)
 
-    if st.button("📥 Gerar relatório em PDF", use_container_width=True):
+    if st.button("📥 Gerar relatório em PDF", width="stretch"):
         _filial_pdf = ", ".join(_filiais_atual) if _filiais_atual else ""
         with st.spinner("Gerando o relatório..."):
             # Indicadores e detalhamento são buscados direto em
@@ -1200,26 +1242,30 @@ with st.sidebar:
             data=_pdf_bytes,
             file_name=_nome_pdf,
             mime="application/pdf",
-            use_container_width=True,
+            width="stretch",
             type="primary",
         )
 
     st.divider()
-    if st.button("🗑️ Limpar filtros", use_container_width=True):
-        # Os widgets acima já foram desenhados neste rerun com os valores
-        # antigos de session_state; só apagar as chaves não muda o que já
-        # está na tela. Por isso o ``st.rerun()`` é necessário: ele força
-        # um novo rerun do zero, e aí os widgets voltam a ler os valores
-        # padrão (já que as chaves não existem mais em session_state).
-        for _k in (
-            "fornecedor",
-            "cliente",
-            "data_inicial",
-            "data_final",
-            "data_grafico_selecionada",
-            "tipo_nfe",
-        ):
-            st.session_state.pop(_k, None)
+    if st.button("🗑️ Limpar filtros", width="stretch"):
+        # Corrigido em 26/08/2026: a primeira versão deste botão só dava
+        # ``st.session_state.pop(chave, None)`` nos widgets e chamava
+        # ``st.rerun()`` em seguida. Isso funciona para variáveis "soltas"
+        # em session_state (como "data_grafico_selecionada", abaixo), mas
+        # nem sempre reseta visualmente widgets como st.selectbox e
+        # st.multiselect: é uma limitação conhecida do Streamlit, onde o
+        # componente correspondente no navegador pode continuar mostrando
+        # o valor antigo mesmo depois do backend "esquecê-lo" (foi
+        # relatado com o Fornecedor, que continuava selecionado depois do
+        # clique). A forma confiável de resetar esse tipo de widget é
+        # trocar a KEY dele, não só apagar seu valor - o Streamlit então
+        # trata o widget como um componente novo e o recria do zero, já
+        # com o valor padrão. É para isso que serve "_reset_seq": cada
+        # widget de filtro usa `_chave_filtro("nome")` (que embute esse
+        # contador) como sua key, então incrementá-lo aqui troca a key de
+        # TODOS eles de uma vez.
+        st.session_state["_reset_seq"] = _reset_seq + 1
+        st.session_state.pop("data_grafico_selecionada", None)
         st.rerun()
 
 
@@ -1253,9 +1299,19 @@ try:
     indicadores = _indicadores_cached(
         _filiais_atual, data_inicial, data_final, fornecedor, cliente, tipo_nfe_param
     )
-except Exception:
+except DatabaseConnectionError as _exc:
+    st.error("Não foi possível conectar ao banco de dados.")
+    st.caption(f"Causa: {_exc}")
+    st.info(
+        "No Streamlit Community Cloud, verifique se os "
+        "secrets (DB_SERVER, DB_DATABASE, DB_USER, DB_PASSWORD) "
+        "estão corretos e se o SQL Server aceita conexões externas "
+        "(porta aberta no firewall)."
+    )
+    st.stop()
+except Exception as _exc:
     st.error("Não foi possível consultar os dados fiscais.")
-    st.caption("Verifique a conexão com o banco e as configurações do arquivo .env.")
+    st.caption(f"Causa: {_exc}")
     st.stop()
 
 if not indicadores:
@@ -1272,6 +1328,12 @@ if fornecedor:
     _legenda_filtros += f" | Fornecedor {fornecedor}"
 if cliente:
     _legenda_filtros += f" | Cliente {cliente}"
+if tipo_nfe_param:
+    # Mostra o tipo mesmo quando foi restringido automaticamente (ver
+    # "_tipo_nfe_auto" acima) - sem isso o usuário via só saída/entrada
+    # sumir da tela sem entender o porquê.
+    _sufixo_tipo = " (automático, por causa do filtro de parceiro)" if _tipo_nfe_auto else ""
+    _legenda_filtros += f" | Tipo: {tipo_nfe_param}{_sufixo_tipo}"
 st.caption(_legenda_filtros)
 
 sem_registros = (
@@ -1431,7 +1493,7 @@ with tab_visao:
                     }
                 ),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "Valor Total": st.column_config.NumberColumn(
                         "Valor Total", format="R$ %.2f"
@@ -1524,7 +1586,7 @@ with tab_visao:
 
             st.plotly_chart(
                 _grafico_evolucao_mensal(_df_evo, _metricas_sel, _metricas_opcoes),
-                use_container_width=True,
+                width="stretch",
                 key="grafico_evolucao_mensal",
             )
 
@@ -1579,7 +1641,7 @@ with tab_documentos:
             st.dataframe(
                 detalhe,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "TIPO": "Tipo",
                     "DOC": "Documento",
@@ -1677,7 +1739,7 @@ with tab_retencoes:
             st.dataframe(
                 df_exibir_retencoes,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "EMISSAO": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
                     "DOCUMENTO": "Documento",
@@ -1736,7 +1798,7 @@ with tab_val_financeiro:
 
     if df_val_fin.empty:
         st.info(
-            "Nenhum título com retenção de IR/PIS/COFINS/CSLL encontrado no "
+            "Nenhum título com retenção de IR/PIS/COFINS/CSLL/ISS encontrado no "
             "período e filial(is) selecionados."
         )
     else:
@@ -1760,7 +1822,7 @@ with tab_val_financeiro:
             with col_v5:
                 st.metric("🟢 OK", quantidade(_qtd_ok))
             st.caption(
-                "Cada retenção (IR/PIS/COFINS/CSLL) é gerada pelo Protheus como "
+                "Cada retenção (IR/PIS/COFINS/CSLL/ISS) é gerada pelo Protheus como "
                 "um título \"irmão\" na própria SE2010 (mesmo número, tipo TX), "
                 "com baixa própria - independente da baixa do título original. "
                 "🔴 Não gerado = nenhum título de taxa encontrado ainda. "
@@ -1823,7 +1885,7 @@ with tab_val_financeiro:
             )[
                 [
                     "EMISSAO", "DOCUMENTO", "FORNECEDOR_ROTULO",
-                    "VALOR_TITULO", "VALOR_RETIDO", "VALOR_LIQUIDO_ESPERADO",
+                    "VALOR_TITULO", "VALOR_ISS", "VALOR_RETIDO", "VALOR_LIQUIDO_ESPERADO",
                     "QTD_TITULOS_RETENCAO", "VALOR_GERADO_FINANCEIRO",
                     "QTD_BAIXADOS", "DATA_ULTIMA_BAIXA", "DIFERENCA",
                     "STATUS",
@@ -1833,12 +1895,13 @@ with tab_val_financeiro:
             st.dataframe(
                 df_exibir_val_fin,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "EMISSAO": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
                     "DOCUMENTO": "Documento",
                     "FORNECEDOR_ROTULO": "Fornecedor",
                     "VALOR_TITULO": st.column_config.NumberColumn("Valor Título", format="R$ %.2f"),
+                    "VALOR_ISS": st.column_config.NumberColumn("ISS Retido", format="R$ %.2f"),
                     "VALOR_RETIDO": st.column_config.NumberColumn("Total Retido", format="R$ %.2f"),
                     "VALOR_LIQUIDO_ESPERADO": st.column_config.NumberColumn(
                         "Líquido Esperado", format="R$ %.2f"

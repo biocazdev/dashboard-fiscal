@@ -12,6 +12,7 @@ ver ``_normalizar_filiais``).
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Any
 
@@ -23,6 +24,7 @@ from database.connection import (
     DatabaseConnectionError,
     adaptar_placeholders,
     get_connection,
+    release_connection,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,7 +88,7 @@ def _ler_sql(sql: str, params: list[Any], rotulo: str = "") -> pd.DataFrame:
         # database/connection.py para o motivo completo).
         return pd.read_sql(adaptar_placeholders(sql), connection, params=params)
     finally:
-        connection.close()
+        release_connection(connection)
         duracao = time.perf_counter() - inicio
         logger.info(
             "Consulta [%s] executada em %.2fs | params=%s",
@@ -326,12 +328,16 @@ def buscar_indicadores(
     # período/filtro (ex.: filial só com entradas no intervalo escolhido).
     ticket_medio = valor_saida / qtd_saida if qtd_saida > 0 else 0.0
 
-    ibs_cbs = _buscar_ibs_cbs(
-        filiais, data_ini, data_fim, fornecedor, cliente, tipo_nfe
-    )
-    pis_cofins = _buscar_pis_cofins(
-        filiais, data_ini, data_fim, fornecedor, cliente, tipo_nfe
-    )
+    # Executa IBS/CBS e PIS/COFINS em paralelo (queries independentes)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        fut_ibs = executor.submit(
+            _buscar_ibs_cbs, filiais, data_ini, data_fim, fornecedor, cliente, tipo_nfe
+        )
+        fut_pis = executor.submit(
+            _buscar_pis_cofins, filiais, data_ini, data_fim, fornecedor, cliente, tipo_nfe
+        )
+        ibs_cbs = fut_ibs.result()
+        pis_cofins = fut_pis.result()
 
     return {
         "QTD_NF_ENTRADA": int(linha["QTD_NF_ENTRADA"]),
@@ -735,7 +741,10 @@ def buscar_evolucao_mensal(
         base[coluna] = 0.0
 
     try:
-        if tipo_nfe != "Saída":
+        def _executar_ladoEntrada() -> dict:
+            resultado: dict = {}
+            if tipo_nfe == "Saída":
+                return resultado
             sql_e, params_filial_e, params_status_e = queries.sql_evolucao_mensal_entrada(
                 filiais, fornecedor
             )
@@ -744,12 +753,9 @@ def buscar_evolucao_mensal(
                 params_e.append(fornecedor)
             params_e += params_status_e
             df_e = _ler_sql(sql_e, params_e, rotulo="evolucao_mensal_entrada")
-            qtd_e = _serie_por_anomes(df_e, "QTD_NF_ENTRADA")
-            valor_e = _serie_por_anomes(df_e, "VALOR_NF_ENTRADA")
-            icms_e = _serie_por_anomes(df_e, "ICMS_ENTRADA")
-            base["QTD_NF_ENTRADA"] = base["ANOMES"].map(lambda a: qtd_e.get(a, 0.0))
-            base["VALOR_NF_ENTRADA"] = base["ANOMES"].map(lambda a: valor_e.get(a, 0.0))
-            base["ICMS_ENTRADA"] = base["ANOMES"].map(lambda a: icms_e.get(a, 0.0))
+            resultado["qtd_e"] = _serie_por_anomes(df_e, "QTD_NF_ENTRADA")
+            resultado["valor_e"] = _serie_por_anomes(df_e, "VALOR_NF_ENTRADA")
+            resultado["icms_e"] = _serie_por_anomes(df_e, "ICMS_ENTRADA")
 
             sql_ibs_e, params_ibs_e = queries.sql_ibs_cbs_mensal_entrada(filiais, fornecedor)
             params_ibs_e_full = params_ibs_e + [
@@ -759,25 +765,21 @@ def buscar_evolucao_mensal(
             if fornecedor:
                 params_ibs_e_full.append(fornecedor)
             df_ibs_e = _ler_sql(sql_ibs_e, params_ibs_e_full, rotulo="ibs_cbs_mensal_entrada")
-            ibs_cbs_e = _serie_ibs_cbs_por_anomes(df_ibs_e)
-            base["IBS_ENTRADA"] = base["ANOMES"].map(
-                lambda a: ibs_cbs_e.get((a, settings.COD_TRIB_IBS_ENTRADA), 0.0)
-            )
-            base["CBS_ENTRADA"] = base["ANOMES"].map(
-                lambda a: ibs_cbs_e.get((a, settings.COD_TRIB_CBS_ENTRADA), 0.0)
-            )
+            resultado["ibs_cbs_e"] = _serie_ibs_cbs_por_anomes(df_ibs_e)
 
             sql_pc_e, params_pc_e = queries.sql_pis_cofins_mensal_entrada(filiais, fornecedor)
             params_pc_e_full = params_pc_e + [data_ini_sql, data_fim_sql]
             if fornecedor:
                 params_pc_e_full.append(fornecedor)
             df_pc_e = _ler_sql(sql_pc_e, params_pc_e_full, rotulo="pis_cofins_mensal_entrada")
-            pis_e = _serie_por_anomes(df_pc_e, "VALOR_PIS")
-            cofins_e = _serie_por_anomes(df_pc_e, "VALOR_COFINS")
-            base["PIS_ENTRADA"] = base["ANOMES"].map(lambda a: pis_e.get(a, 0.0))
-            base["COFINS_ENTRADA"] = base["ANOMES"].map(lambda a: cofins_e.get(a, 0.0))
+            resultado["pis_e"] = _serie_por_anomes(df_pc_e, "VALOR_PIS")
+            resultado["cofins_e"] = _serie_por_anomes(df_pc_e, "VALOR_COFINS")
+            return resultado
 
-        if tipo_nfe != "Entrada":
+        def _executar_ladoSaida() -> dict:
+            resultado: dict = {}
+            if tipo_nfe == "Entrada":
+                return resultado
             sql_s, params_filial_s, params_status_s = queries.sql_evolucao_mensal_saida(
                 filiais, cliente
             )
@@ -786,12 +788,9 @@ def buscar_evolucao_mensal(
                 params_s.append(cliente)
             params_s += params_status_s
             df_s = _ler_sql(sql_s, params_s, rotulo="evolucao_mensal_saida")
-            qtd_s = _serie_por_anomes(df_s, "QTD_NF_SAIDA")
-            valor_s = _serie_por_anomes(df_s, "VALOR_NF_SAIDA")
-            icms_s = _serie_por_anomes(df_s, "ICMS_SAIDA")
-            base["QTD_NF_SAIDA"] = base["ANOMES"].map(lambda a: qtd_s.get(a, 0.0))
-            base["VALOR_NF_SAIDA"] = base["ANOMES"].map(lambda a: valor_s.get(a, 0.0))
-            base["ICMS_SAIDA"] = base["ANOMES"].map(lambda a: icms_s.get(a, 0.0))
+            resultado["qtd_s"] = _serie_por_anomes(df_s, "QTD_NF_SAIDA")
+            resultado["valor_s"] = _serie_por_anomes(df_s, "VALOR_NF_SAIDA")
+            resultado["icms_s"] = _serie_por_anomes(df_s, "ICMS_SAIDA")
 
             sql_ibs_s, params_ibs_s = queries.sql_ibs_cbs_mensal_saida(filiais, cliente)
             params_ibs_s_full = params_ibs_s + [
@@ -801,23 +800,50 @@ def buscar_evolucao_mensal(
             if cliente:
                 params_ibs_s_full.append(cliente)
             df_ibs_s = _ler_sql(sql_ibs_s, params_ibs_s_full, rotulo="ibs_cbs_mensal_saida")
-            ibs_cbs_s = _serie_ibs_cbs_por_anomes(df_ibs_s)
-            base["IBS_SAIDA"] = base["ANOMES"].map(
-                lambda a: ibs_cbs_s.get((a, settings.COD_TRIB_IBS_SAIDA), 0.0)
-            )
-            base["CBS_SAIDA"] = base["ANOMES"].map(
-                lambda a: ibs_cbs_s.get((a, settings.COD_TRIB_CBS_SAIDA), 0.0)
-            )
+            resultado["ibs_cbs_s"] = _serie_ibs_cbs_por_anomes(df_ibs_s)
 
             sql_pc_s, params_pc_s = queries.sql_pis_cofins_mensal_saida(filiais, cliente)
             params_pc_s_full = params_pc_s + [data_ini_sql, data_fim_sql]
             if cliente:
                 params_pc_s_full.append(cliente)
             df_pc_s = _ler_sql(sql_pc_s, params_pc_s_full, rotulo="pis_cofins_mensal_saida")
-            pis_s = _serie_por_anomes(df_pc_s, "VALOR_PIS")
-            cofins_s = _serie_por_anomes(df_pc_s, "VALOR_COFINS")
-            base["PIS_SAIDA"] = base["ANOMES"].map(lambda a: pis_s.get(a, 0.0))
-            base["COFINS_SAIDA"] = base["ANOMES"].map(lambda a: cofins_s.get(a, 0.0))
+            resultado["pis_s"] = _serie_por_anomes(df_pc_s, "VALOR_PIS")
+            resultado["cofins_s"] = _serie_por_anomes(df_pc_s, "VALOR_COFINS")
+            return resultado
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_e = executor.submit(_executar_ladoEntrada)
+            fut_s = executor.submit(_executar_ladoSaida)
+            res_e = fut_e.result()
+            res_s = fut_s.result()
+
+        if res_e:
+            base["QTD_NF_ENTRADA"] = base["ANOMES"].map(lambda a: res_e["qtd_e"].get(a, 0.0))
+            base["VALOR_NF_ENTRADA"] = base["ANOMES"].map(lambda a: res_e["valor_e"].get(a, 0.0))
+            base["ICMS_ENTRADA"] = base["ANOMES"].map(lambda a: res_e["icms_e"].get(a, 0.0))
+            ibs_cbs_e = res_e["ibs_cbs_e"]
+            base["IBS_ENTRADA"] = base["ANOMES"].map(
+                lambda a: ibs_cbs_e.get((a, settings.COD_TRIB_IBS_ENTRADA), 0.0)
+            )
+            base["CBS_ENTRADA"] = base["ANOMES"].map(
+                lambda a: ibs_cbs_e.get((a, settings.COD_TRIB_CBS_ENTRADA), 0.0)
+            )
+            base["PIS_ENTRADA"] = base["ANOMES"].map(lambda a: res_e["pis_e"].get(a, 0.0))
+            base["COFINS_ENTRADA"] = base["ANOMES"].map(lambda a: res_e["cofins_e"].get(a, 0.0))
+
+        if res_s:
+            base["QTD_NF_SAIDA"] = base["ANOMES"].map(lambda a: res_s["qtd_s"].get(a, 0.0))
+            base["VALOR_NF_SAIDA"] = base["ANOMES"].map(lambda a: res_s["valor_s"].get(a, 0.0))
+            base["ICMS_SAIDA"] = base["ANOMES"].map(lambda a: res_s["icms_s"].get(a, 0.0))
+            ibs_cbs_s = res_s["ibs_cbs_s"]
+            base["IBS_SAIDA"] = base["ANOMES"].map(
+                lambda a: ibs_cbs_s.get((a, settings.COD_TRIB_IBS_SAIDA), 0.0)
+            )
+            base["CBS_SAIDA"] = base["ANOMES"].map(
+                lambda a: ibs_cbs_s.get((a, settings.COD_TRIB_CBS_SAIDA), 0.0)
+            )
+            base["PIS_SAIDA"] = base["ANOMES"].map(lambda a: res_s["pis_s"].get(a, 0.0))
+            base["COFINS_SAIDA"] = base["ANOMES"].map(lambda a: res_s["cofins_s"].get(a, 0.0))
     except DatabaseConnectionError:
         raise
     except Exception as exc:
