@@ -19,6 +19,7 @@ from services import (
     alertas_service,
     anotacoes_service,
     conciliacao_service,
+    cte_service,
     fiscal_service,
     pdf_service,
     qualidade_service,
@@ -311,6 +312,17 @@ def _validacao_financeiro_cached(
     return retencao_service.buscar_validacao_financeiro(
         list(filiais), data_inicial, data_final, fornecedor
     )
+
+
+@st.cache_data(ttl=300, show_spinner="Consultando CT-e...")
+def _ctes_cached(
+    filiais: tuple[str, ...],
+    data_inicial: date,
+    data_final: date,
+    fornecedor: str | None = None,
+):
+    """Cache dos CT-e (~5 minutos). Ver services/cte_service.py."""
+    return cte_service.buscar_ctes(list(filiais), data_inicial, data_final, fornecedor)
 
 
 @st.cache_data(ttl=600)
@@ -1390,7 +1402,7 @@ st.divider()
 
 # ---------------------------------------------------------------------------
 # Abas: Visão Geral | Conciliação Fiscal x Contábil | Documentos | Retenções
-# | Retenções x Financeiro
+# | Retenções x Financeiro | CT-e
 # ---------------------------------------------------------------------------
 # Cada bloco ``with tab_*:`` abaixo grava a aba atual em
 # ``st.session_state["aba_ativa"]``. Isso já foi usado no passado para o
@@ -1399,13 +1411,21 @@ st.divider()
 # independente da aba (ver DOCUMENTACAO.md, seção 13), então essa chave
 # ficou sem leitor - mantida aqui por não ter custo e por poder voltar a
 # ser útil (ex.: lembrar a última aba visitada entre reruns).
-tab_visao, tab_conciliacao, tab_documentos, tab_retencoes, tab_val_financeiro = st.tabs(
+(
+    tab_visao,
+    tab_conciliacao,
+    tab_documentos,
+    tab_retencoes,
+    tab_val_financeiro,
+    tab_cte,
+) = st.tabs(
     [
         "📊 Visão Geral",
         "🔄 Conciliação Fiscal x Contábil",
         "📄 Documentos",
         "🧾 Retenções",
         "🏦 Retenções x Financeiro",
+        "🚚 CT-e",
     ]
 )
 
@@ -1938,3 +1958,119 @@ with tab_val_financeiro:
                 )
             with col_meta_vf:
                 st.caption(f"{len(df_exibir_val_fin)} de {len(df_val_fin)} título(s) exibido(s).")
+
+# --------------------------------- CT-e -------------------------------------
+# Conhecimento de Transporte Eletrônico - pedido pelo cliente em 27/08/2026.
+# Ver services/cte_service.py para o histórico completo da investigação:
+# este Protheus não tem o módulo de Transporte (TMS/GTMS), então a fonte é
+# a tabela genérica de documentos do gerador de SPED Fiscal (C20),
+# filtrada pelo campo C20_TPCTE. A tabela está VAZIA nesta instalação
+# (nenhum CT-e lançado ainda no Protheus) - a aba foi construída mesmo
+# assim, a pedido explícito do cliente, para já funcionar automaticamente
+# assim que o módulo passar a ser alimentado, sem precisar mexer no
+# dashboard de novo.
+with tab_cte:
+    st.session_state["aba_ativa"] = "cte"
+    st.subheader("CT-e (Conhecimento de Transporte Eletrônico)")
+    st.caption(
+        "Fonte: registro genérico de documento fiscal do gerador de SPED "
+        "Fiscal (tabela C20), filtrado pelo tipo de CT-e - esta instalação "
+        "não usa o módulo de Transporte (TMS) do Protheus. Campos ainda "
+        "não confirmados contra um CT-e real (a tabela está vazia nesta "
+        "base) - conferir assim que o primeiro CT-e for lançado."
+    )
+
+    try:
+        df_cte = _ctes_cached(_filiais_atual, data_inicial, data_final, fornecedor)
+    except Exception:
+        st.warning("Não foi possível consultar os CT-e.")
+        df_cte = pd.DataFrame()
+
+    if df_cte.empty:
+        st.info(
+            "Nenhum CT-e encontrado no período e filial(is) selecionados. "
+            "Isso é esperado enquanto o Protheus não registrar nenhum CT-e "
+            "nesta base - a aba já está pronta para exibir automaticamente "
+            "assim que houver o primeiro lançamento."
+        )
+    else:
+        with st.expander("📊 Resumo", expanded=True):
+            col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+            with col_c1:
+                st.metric("🚚 CT-e", quantidade(len(df_cte)))
+            with col_c2:
+                st.metric("💰 Valor total do frete", moeda(df_cte["VALOR_FRETE"].sum()))
+            with col_c3:
+                st.metric("📄 Valor total dos documentos", moeda(df_cte["VALOR_DOCUMENTO"].sum()))
+            with col_c4:
+                st.metric("🛡️ Valor total do seguro", moeda(df_cte["VALOR_SEGURO"].sum()))
+
+        with st.expander("📋 Ver CT-e", expanded=False):
+            rotulo_transportadora = df_cte.apply(
+                lambda r: f"{r['TRANSPORTADORA']} - {r['TRANSPORTADORA_NOME']}"
+                if r["TRANSPORTADORA_NOME"]
+                else r["TRANSPORTADORA"],
+                axis=1,
+            )
+            df_exibir_cte = df_cte.assign(TRANSPORTADORA_ROTULO=rotulo_transportadora)[
+                [
+                    "EMISSAO", "SERIE", "NUMERO", "TRANSPORTADORA_ROTULO", "CNPJ",
+                    "SITUACAO", "TIPO_CTE", "MODAL",
+                    "VALOR_FRETE", "VALOR_SEGURO", "VALOR_DOCUMENTO",
+                    "CHAVE_NFE_REFERENCIADA", "PROTOCOLO_SEFAZ", "DATA_CANCELAMENTO",
+                ]
+            ]
+
+            st.dataframe(
+                df_exibir_cte,
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "EMISSAO": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
+                    "SERIE": "Série",
+                    "NUMERO": "Número",
+                    "TRANSPORTADORA_ROTULO": "Transportadora",
+                    "CNPJ": "CNPJ",
+                    "SITUACAO": "Situação",
+                    "TIPO_CTE": "Tipo CT-e",
+                    "MODAL": "Modal",
+                    "VALOR_FRETE": st.column_config.NumberColumn("Frete", format="R$ %.2f"),
+                    "VALOR_SEGURO": st.column_config.NumberColumn("Seguro", format="R$ %.2f"),
+                    "VALOR_DOCUMENTO": st.column_config.NumberColumn(
+                        "Valor Total", format="R$ %.2f"
+                    ),
+                    "CHAVE_NFE_REFERENCIADA": "Chave NF-e Vinculada",
+                    "PROTOCOLO_SEFAZ": "Protocolo SEFAZ",
+                    "DATA_CANCELAMENTO": st.column_config.DateColumn(
+                        "Cancelamento", format="DD/MM/YYYY"
+                    ),
+                },
+            )
+            st.caption(
+                "Coluna \"Chave NF-e Vinculada\" ainda não confirmada - é a "
+                "aposta para o vínculo com a nota fiscal transportada "
+                "(campo C20_CHVREF), mas pode também apontar para outro "
+                "CT-e em casos de redespacho. Impostos do frete (ICMS) "
+                "ainda não localizados em nenhuma tabela desta base - ver "
+                "services/cte_service.py."
+            )
+
+            col_csv_cte, col_xlsx_cte, col_meta_cte = st.columns([1, 1, 2])
+            with col_csv_cte:
+                st.download_button(
+                    "Baixar CSV",
+                    data=df_exibir_cte.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="cte.csv",
+                    mime="text/csv",
+                )
+            with col_xlsx_cte:
+                _buf_cte = io.BytesIO()
+                df_exibir_cte.to_excel(_buf_cte, index=False, engine="openpyxl")
+                st.download_button(
+                    "Baixar Excel",
+                    data=_buf_cte.getvalue(),
+                    file_name="cte.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            with col_meta_cte:
+                st.caption(f"{len(df_cte)} CT-e no período.")

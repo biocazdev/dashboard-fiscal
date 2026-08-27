@@ -298,6 +298,79 @@ TABELA_FINANCEIRO: str = _get_secret_or_env("TABELA_FINANCEIRO", "SEF010")
 acima) - mantida apenas por compatibilidade com .env já configurados."""
 
 # ---------------------------------------------------------------------------
+# CT-e (Conhecimento de Transporte Eletrônico) - aba "🚚 CT-e"
+# ---------------------------------------------------------------------------
+# Investigação em 27/08/2026 (Biocaz, a pedido do cliente: "preciso também de
+# informações de CT-e"). Nenhuma das hipóteses "óbvias" se confirmou nesta
+# instalação - documentado aqui em detalhe porque, ao contrário das outras
+# abas, a tabela usada abaixo está VAZIA (0 linhas) no momento da
+# implementação: nada disto foi validado contra um CT-e real, só contra a
+# estrutura do dicionário de dados (SX2010/SX3010) e a existência física das
+# tabelas. O cliente pediu para montar mesmo assim, para já aparecer quando o
+# Protheus começar a gravar CT-e.
+#
+# Descartado, em ordem:
+#   1. Módulo de Transporte/TMS (GTMS) - tabelas DT6 (cabeçalho do CT-e) e
+#      DTC (vínculo com a NF-e/impostos do frete): existem no DICIONÁRIO
+#      (SX3010), mas a tabela FÍSICA nunca foi criada neste banco (não
+#      apareceu em sys.tables/INFORMATION_SCHEMA.TABLES) - este Protheus não
+#      usa o módulo de Transporte.
+#   2. Tabelas CT0 a CTZ (existem fisicamente, ex.: CTE010): TODAS são do
+#      módulo de Contabilidade (módulo 34 no SX2010), incluindo a "CTE010"
+#      (que apesar do nome é "Amarração Moeda x Calendário" - coincidência
+#      de sigla, nada a ver com Conhecimento de Transporte).
+#   3. Campo "modelo do documento fiscal" em SF1/SF2/SD1/SD2: só existe em
+#      SD1 (D1_MODELO) - mas está em branco/nulo nos 41 registros da
+#      SD1010 desta base (campo não alimentado nesta instalação).
+#   4. Tabelas de frete com campos citando "CTE" no dicionário (C20, DD9,
+#      DE5, DEV - achadas numa varredura ampla por "FRETE"/"TRANSPORT"/
+#      "CTE"/"NFEID"): só a C20010 existe fisicamente, e está com 0 linhas;
+#      DD9/DE5/DEV nem existem.
+#
+# Tabela escolhida: C20 (config TABELA_CTE). Pelos nomes de campo, é o
+# registro genérico de documento fiscal do gerador de SPED Fiscal
+# (EFD ICMS/IPI) do Protheus - o mesmo formato do Registro C100 do leiaute
+# SPED, que serve para QUALQUER modelo de documento (NF-e modelo 55, CT-e
+# modelo 57, NFS-e etc.), não só CT-e. Por isso o filtro de CT-e não é por
+# nome de tabela, e sim pelo campo C20_TPCTE ("Tipo do CT-e") não vazio -
+# esse campo, pelo nome, só deveria vir preenchido nas linhas que são
+# efetivamente um CT-e (os outros modelos de documento não têm "tipo de
+# CT-e"). Principais campos usados (todos NÃO CONFIRMADOS contra dado real):
+#   C20_FILIAL/C20_SERIE/C20_NUMDOC/C20_DTDOC - filial/série/número/emissão
+#   C20_CLIFOR/C20_LOJA   - código do fornecedor/transportadora (mesmo
+#                            espaço de código do SA2 - A2_COD/A2_LOJA -
+#                            usado para casar com o filtro de Fornecedor
+#                            que já existe na barra lateral)
+#   C20_CPARTI/C20_DCODPA - código/nome do participante como gravado pelo
+#                           SPED (nem sempre é o mesmo formato do A2_COD -
+#                           usado só como rótulo de exibição)
+#   C20_VCNPJ             - CNPJ do participante (já vem pronto na própria
+#                           C20, sem precisar de JOIN com SA2)
+#   C20_DCODSI            - descrição da situação do documento
+#   C20_CHVELE            - chave de acesso do próprio CT-e (44 posições)
+#   C20_CHVREF            - chave do documento eletrônico REFERENCIADO -
+#                           aposta para o vínculo "CT-e -> NF-e transportada"
+#                           pedido pelo cliente, mas ainda não testada (não
+#                           dá pra saber se aponta pra chave da NF-e ou pra
+#                           outro CT-e, ex. num caso de redespacho)
+#   C20_TPCTE/C20_MODAL   - tipo do CT-e / modal de transporte
+#   C20_PROTOC            - protocolo de autorização SEFAZ
+#   C20_VLDOC/C20_VLRFRT/C20_VLRSEG - valor do documento/frete/seguro
+#   C20_DTCANC            - data de cancelamento (documento cancelado)
+#
+# PENDENTE: não foi encontrado nenhum campo de ICMS na C20 (só campos de II/
+# IOF, que são de importação, não de frete) - o "impostos do frete (ICMS/
+# ISS)" pedido pelo cliente por enquanto só está parcialmente coberto
+# (C20_VLABMT/C20_VLABSU parecem ser abatimento de ISS, mas de outro tipo de
+# documento - provavelmente NFS-e - já que CT-e é tributado por ICMS, não
+# ISS). Fica para quando houver CT-e real na base: aí dá pra conferir se o
+# ICMS do frete está em outra tabela (candidatas descartadas por estarem
+# vazias/inexistentes: DD9, DE5, DEV - mas a varredura original também
+# achou C30/C3F/C3G/C3H/C4S com campos de ICMS de frete, ainda não checados
+# quanto à existência física).
+TABELA_CTE: str = _get_secret_or_env("TABELA_CTE", "C20010")
+
+# ---------------------------------------------------------------------------
 # Anotações locais por documento (bloco "Produtividade")
 # ---------------------------------------------------------------------------
 # Como o Protheus é acessado somente leitura, as observações do contador

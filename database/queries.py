@@ -1347,3 +1347,82 @@ def sql_validacao_financeiro_retencoes(
         FILTRO_FORNECEDOR=filtro,
     )
     return sql, params
+
+
+# ---------------------------------------------------------------------------
+# CT-e (Conhecimento de Transporte Eletrônico) - 27/08/2026
+# ---------------------------------------------------------------------------
+# Ver settings.py (TABELA_CTE) para o histórico completo da investigação:
+# a C20 é o registro genérico de documento fiscal do gerador de SPED Fiscal
+# do Protheus (formato do Registro C100 do leiaute SPED), usado para
+# QUALQUER modelo de documento - por isso o filtro de CT-e é pelo campo
+# C20_TPCTE ("Tipo do CT-e") não vazio, e não por nome/modelo de tabela.
+# NADA disto foi validado contra um CT-e real (a tabela está com 0 linhas
+# nesta instalação no momento em que esta consulta foi escrita) - assim que
+# houver o primeiro CT-e lançado, reconferir se os campos abaixo realmente
+# vêm preenchidos como o dicionário de dados sugere.
+SQL_CTE = """
+SELECT
+    C20_FILIAL                                   AS FILIAL,
+    RTRIM(C20_SERIE)                             AS SERIE,
+    RTRIM(C20_NUMDOC)                             AS NUMERO,
+    C20_DTDOC                                    AS EMISSAO,
+    RTRIM(C20_CLIFOR)                            AS TRANSPORTADORA,
+    RTRIM(C20_LOJA)                              AS TRANSPORTADORA_LOJA,
+    RTRIM(C20_DCODPA)                            AS TRANSPORTADORA_NOME,
+    RTRIM(C20_VCNPJ)                             AS CNPJ,
+    RTRIM(C20_DCODSI)                            AS SITUACAO,
+    RTRIM(C20_TPCTE)                             AS TIPO_CTE,
+    RTRIM(C20_MODAL)                             AS MODAL,
+    RTRIM(C20_CHVELE)                            AS CHAVE_CTE,
+    -- Aposta para o vínculo "CT-e -> NF-e transportada" pedido pelo
+    -- cliente - ainda não confirmada (ver settings.py, TABELA_CTE).
+    RTRIM(C20_CHVREF)                            AS CHAVE_NFE_REFERENCIADA,
+    RTRIM(C20_PROTOC)                            AS PROTOCOLO_SEFAZ,
+    C20_DTCANC                                   AS DATA_CANCELAMENTO,
+    ISNULL(C20_VLDOC, 0)                         AS VALOR_DOCUMENTO,
+    ISNULL(C20_VLRFRT, 0)                        AS VALOR_FRETE,
+    ISNULL(C20_VLRSEG, 0)                        AS VALOR_SEGURO,
+    -- Campos de ISS encontrados na C20 - PROVAVELMENTE de outro tipo de
+    -- documento (NFS-e), não do CT-e (que é tributado por ICMS, não ISS) -
+    -- expostos mesmo assim porque foi o único candidato encontrado; não
+    -- tratar como confirmado (ver settings.py). Nenhum campo de ICMS foi
+    -- localizado nesta tabela.
+    ISNULL(C20_VLABMT, 0)                        AS VALOR_ABATIMENTO_ISS_MATERIAIS,
+    ISNULL(C20_VLABSU, 0)                        AS VALOR_ABATIMENTO_ISS_SUBEMPREITADA
+FROM {TABELA_CTE}
+WHERE D_E_L_E_T_ = ''
+  AND {FILIAL}
+  AND C20_DTDOC BETWEEN ? AND ?
+  {FILTRO_FORNECEDOR}
+  -- Único discriminador de CT-e disponível nesta tabela genérica de
+  -- documentos: C20_TPCTE só deveria vir preenchido para CT-e.
+  AND C20_TPCTE IS NOT NULL
+  AND RTRIM(C20_TPCTE) <> ''
+ORDER BY C20_DTDOC, C20_CLIFOR, SERIE, NUMERO
+"""
+
+
+def sql_ctes(filiais: list[str], fornecedor: str | None = None) -> tuple[str, list[str]]:
+    """SQL dos CT-e (Conhecimento de Transporte Eletrônico) por filial(is).
+
+    Ver settings.py (TABELA_CTE) e o comentário acima de ``SQL_CTE`` para o
+    histórico completo da investigação (27/08/2026) - resumo: esta
+    instalação não tem módulo de Transporte (TMS), então a fonte usada é a
+    tabela genérica de documentos do gerador de SPED Fiscal (C20), filtrada
+    pelo campo C20_TPCTE. A tabela está vazia nesta instalação (nenhum CT-e
+    lançado no Protheus ainda) - construída mesmo assim, a pedido do
+    cliente, para já funcionar quando o módulo passar a ser alimentado.
+
+    Quando ``fornecedor`` é informado, filtra pelo código da transportadora
+    (C20_CLIFOR - mesmo espaço de código do SA2/A2_COD usado no resto do
+    dashboard).
+    """
+    filiais_sql, params = _in_clause("C20_FILIAL", filiais)
+    filtro = "AND RTRIM(C20_CLIFOR) = ?" if fornecedor else ""
+    sql = SQL_CTE.format(
+        TABELA_CTE=_tabela(settings.TABELA_CTE),
+        FILIAL=filiais_sql,
+        FILTRO_FORNECEDOR=filtro,
+    )
+    return sql, params
