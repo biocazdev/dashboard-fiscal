@@ -740,6 +740,101 @@ def sql_cfop_entrada(filiais: list[str], fornecedor: str | None = None) -> tuple
 
 
 # ---------------------------------------------------------------------------
+# Apuração de ICMS por CFOP - aba "Apuração de ICMS" (réplica da tela nativa
+# do Protheus, pedida em 22/09/2026).
+#
+# Campos confirmados via investigação SQL em 4 rodadas (ver
+# DOCUMENTACAO.md): D1_BASEICM/D2_BASEICM (Base de Cálculo) e
+# D1_VALICM/D2_VALICM (Imposto Creditado/Debitado) existem fisicamente em
+# SD1010/SD2010 e batem com os valores mostrados na tela nativa para
+# "Valor Contábil" (D1_TOTAL/D2_TOTAL, mesmo campo já usado em
+# sql_cfop_entrada/saida) e "Base de Cálculo".
+#
+# NÃO IMPLEMENTADO: as colunas "Isentas" e "Outras" da tela nativa não têm
+# campo correspondente confirmado nesta instalação - não são campos
+# próprios de SD1/SD2, e a hipótese mais provável (classificação fiscal
+# via TES: D1_TES/D2_TES -> SF4010.F4_LFICM, campo "T/I/O/Não/Zerado" que
+# no SPED separa Tributada/Isenta/Outras) não se confirmou: F4_LFICM está
+# em branco para quase todos os TES cadastrados nesta base. Não adivinhar
+# essa classificação para não exibir um valor fiscal incorreto ao
+# contador - mesma decisão já tomada para "notas canceladas"
+# (STATUS_CANCELADO_ENTRADA/SAIDA).
+SQL_APURACAO_ICMS_SAIDA = """
+SELECT
+    {CAMPO_CFOP}                                                    AS CFOP,
+    COUNT(DISTINCT D2_FILIAL + '|' + D2_DOC + '|' + D2_SERIE)       AS QTD_NOTAS,
+    COUNT(*)                                                        AS QTD_ITENS,
+    ISNULL(SUM(D2_TOTAL), 0)                                        AS VALOR_CONTABIL,
+    ISNULL(SUM(D2_BASEICM), 0)                                      AS BASE_ICMS,
+    ISNULL(SUM(D2_VALICM), 0)                                       AS VALOR_ICMS
+FROM {TABELA_ITEM_SAIDA}
+INNER JOIN {TABELA_NF_SAIDA}
+    ON D2_FILIAL  = F2_FILIAL
+   AND D2_DOC     = F2_DOC
+   AND D2_SERIE   = F2_SERIE
+   AND D2_EMISSAO = F2_EMISSAO
+WHERE {TABELA_ITEM_SAIDA}.D_E_L_E_T_ = ''
+  AND {TABELA_NF_SAIDA}.D_E_L_E_T_ = ''
+  AND {FILIAL}
+  AND F2_EMISSAO BETWEEN ? AND ?
+  {FILTRO_CLIENTE}
+GROUP BY {CAMPO_CFOP}
+ORDER BY VALOR_CONTABIL DESC
+"""
+
+SQL_APURACAO_ICMS_ENTRADA = """
+SELECT
+    {CAMPO_CFOP}                                                    AS CFOP,
+    COUNT(DISTINCT D1_FILIAL + '|' + D1_DOC + '|' + D1_SERIE)       AS QTD_NOTAS,
+    COUNT(*)                                                        AS QTD_ITENS,
+    ISNULL(SUM(D1_TOTAL), 0)                                        AS VALOR_CONTABIL,
+    ISNULL(SUM(D1_BASEICM), 0)                                      AS BASE_ICMS,
+    ISNULL(SUM(D1_VALICM), 0)                                       AS VALOR_ICMS
+FROM {TABELA_ITEM_ENTRADA}
+INNER JOIN {TABELA_NF_ENTRADA}
+    ON D1_FILIAL  = F1_FILIAL
+   AND D1_DOC     = F1_DOC
+   AND D1_SERIE   = F1_SERIE
+   AND D1_EMISSAO = F1_EMISSAO
+WHERE {TABELA_ITEM_ENTRADA}.D_E_L_E_T_ = ''
+  AND {TABELA_NF_ENTRADA}.D_E_L_E_T_ = ''
+  AND {FILIAL}
+  AND F1_EMISSAO BETWEEN ? AND ?
+  {FILTRO_FORNECEDOR}
+GROUP BY {CAMPO_CFOP}
+ORDER BY VALOR_CONTABIL DESC
+"""
+
+
+def sql_apuracao_icms_saida(filiais: list[str], cliente: str | None = None) -> tuple[str, list[str]]:
+    """SQL da apuração de ICMS de saída por CFOP (via SD2 -> SF2) + filiais."""
+    filiais_sql, params = _in_clause("F2_FILIAL", filiais)
+    filtro = "AND F2_CLIENTE = ?" if cliente else ""
+    sql = SQL_APURACAO_ICMS_SAIDA.format(
+        CAMPO_CFOP=_campo(settings.CAMPO_CFOP_SAIDA),
+        TABELA_ITEM_SAIDA=_tabela(settings.TABELA_ITEM_SAIDA),
+        TABELA_NF_SAIDA=_tabela(settings.TABELA_NF_SAIDA),
+        FILIAL=filiais_sql,
+        FILTRO_CLIENTE=filtro,
+    )
+    return sql, params
+
+
+def sql_apuracao_icms_entrada(filiais: list[str], fornecedor: str | None = None) -> tuple[str, list[str]]:
+    """SQL da apuração de ICMS de entrada por CFOP (via SD1 -> SF1) + filiais."""
+    filiais_sql, params = _in_clause("F1_FILIAL", filiais)
+    filtro = "AND F1_FORNECE = ?" if fornecedor else ""
+    sql = SQL_APURACAO_ICMS_ENTRADA.format(
+        CAMPO_CFOP=_campo(settings.CAMPO_CFOP_ENTRADA),
+        TABELA_ITEM_ENTRADA=_tabela(settings.TABELA_ITEM_ENTRADA),
+        TABELA_NF_ENTRADA=_tabela(settings.TABELA_NF_ENTRADA),
+        FILIAL=filiais_sql,
+        FILTRO_FORNECEDOR=filtro,
+    )
+    return sql, params
+
+
+# ---------------------------------------------------------------------------
 # PIS/COFINS (Grupo B) - campos nativos de SD1/SD2, não passam pelo F2D.
 # COFINS truncado para "COF" nesta instalação: D1/D2_BASECOF, D1/D2_VALCOF,
 # D1/D2_ALQCOF (confirmado em 21/08/2026, junto com D1/D2_BASEPIS/VALPIS/ALQPIS).

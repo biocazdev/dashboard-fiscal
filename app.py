@@ -18,6 +18,7 @@ from config import settings
 from services import (
     alertas_service,
     anotacoes_service,
+    apuracao_icms_service,
     conciliacao_service,
     cte_service,
     fiscal_service,
@@ -323,6 +324,32 @@ def _ctes_cached(
 ):
     """Cache dos CT-e (~5 minutos). Ver services/cte_service.py."""
     return cte_service.buscar_ctes(list(filiais), data_inicial, data_final, fornecedor)
+
+
+@st.cache_data(ttl=300, show_spinner="Consultando apuração de ICMS...")
+def _apuracao_icms_saida_cached(
+    filiais: tuple[str, ...],
+    data_inicial: date,
+    data_final: date,
+    cliente: str | None = None,
+):
+    """Cache da apuração de ICMS de saída (~5 minutos). Ver services/apuracao_icms_service.py."""
+    return apuracao_icms_service.buscar_apuracao_icms_saida(
+        list(filiais), data_inicial, data_final, cliente
+    )
+
+
+@st.cache_data(ttl=300, show_spinner="Consultando apuração de ICMS...")
+def _apuracao_icms_entrada_cached(
+    filiais: tuple[str, ...],
+    data_inicial: date,
+    data_final: date,
+    fornecedor: str | None = None,
+):
+    """Cache da apuração de ICMS de entrada (~5 minutos). Ver services/apuracao_icms_service.py."""
+    return apuracao_icms_service.buscar_apuracao_icms_entrada(
+        list(filiais), data_inicial, data_final, fornecedor
+    )
 
 
 @st.cache_data(ttl=600)
@@ -1418,6 +1445,7 @@ st.divider()
     tab_retencoes,
     tab_val_financeiro,
     tab_cte,
+    tab_apuracao_icms,
 ) = st.tabs(
     [
         "📊 Visão Geral",
@@ -1426,6 +1454,7 @@ st.divider()
         "🧾 Retenções",
         "🏦 Retenções x Financeiro",
         "🚚 CT-e",
+        "🧮 Apuração de ICMS",
     ]
 )
 
@@ -2074,3 +2103,136 @@ with tab_cte:
                 )
             with col_meta_cte:
                 st.caption(f"{len(df_cte)} CT-e no período.")
+
+
+# --------------------------- Apuração de ICMS -------------------------------
+# Réplica da tela nativa do Protheus "Apuração de ICMS", por CFOP. Só as
+# colunas confirmadas contra o banco real foram implementadas (Valor
+# Contábil, Base de Cálculo, Imposto Debitado/Creditado) - ver
+# services/apuracao_icms_service.py para o que ficou pendente (Isentas,
+# Outras, ICMS-ST) e por quê.
+with tab_apuracao_icms:
+    st.session_state["aba_ativa"] = "apuracao_icms"
+    st.subheader("Apuração de ICMS")
+    st.caption(
+        "Quebra por CFOP com Valor Contábil (D1/D2_TOTAL), Base de Cálculo "
+        "(D1/D2_BASEICM) e Imposto Creditado/Debitado (D1/D2_VALICM) - "
+        "campos confirmados via SQL contra o banco real. As colunas "
+        "\"Isentas\" e \"Outras\" da tela nativa do Protheus e as sub-abas "
+        "de ICMS-ST ainda não têm fonte confirmada nesta instalação - ver "
+        "services/apuracao_icms_service.py para o detalhe da investigação."
+    )
+
+    tab_icms_entradas, tab_icms_saidas, tab_apuracao_resumo = st.tabs(
+        ["ICMS-Entradas", "ICMS-Saídas", "Apuração-ICMS"]
+    )
+
+    def _exibir_apuracao_icms(df: pd.DataFrame, chave: str, rotulo_imposto: str) -> None:
+        """Renderiza a tabela por CFOP + export, comum às sub-abas entrada/saída."""
+        if df.empty:
+            st.info("Nenhum documento encontrado no período e filial(is) selecionados.")
+            return
+
+        col_1, col_2, col_3 = st.columns(3)
+        with col_1:
+            st.metric("Valor Contábil", moeda(df["VALOR_CONTABIL"].sum()))
+        with col_2:
+            st.metric("Base de Cálculo", moeda(df["BASE_ICMS"].sum()))
+        with col_3:
+            st.metric(rotulo_imposto, moeda(df["VALOR_ICMS"].sum()))
+
+        st.dataframe(
+            df,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "CFOP": "CFOP",
+                "QTD_NOTAS": st.column_config.NumberColumn("Notas", format="%d"),
+                "QTD_ITENS": st.column_config.NumberColumn("Itens", format="%d"),
+                "VALOR_CONTABIL": st.column_config.NumberColumn(
+                    "Valor Contábil", format="R$ %.2f"
+                ),
+                "BASE_ICMS": st.column_config.NumberColumn(
+                    "Base de Cálculo", format="R$ %.2f"
+                ),
+                "VALOR_ICMS": st.column_config.NumberColumn(rotulo_imposto, format="R$ %.2f"),
+            },
+        )
+
+        col_csv, col_xlsx, col_meta = st.columns([1, 1, 2])
+        with col_csv:
+            st.download_button(
+                "Baixar CSV",
+                data=df.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"apuracao_icms_{chave}.csv",
+                mime="text/csv",
+                key=f"csv_apuracao_icms_{chave}",
+            )
+        with col_xlsx:
+            _buf = io.BytesIO()
+            df.to_excel(_buf, index=False, engine="openpyxl")
+            st.download_button(
+                "Baixar Excel",
+                data=_buf.getvalue(),
+                file_name=f"apuracao_icms_{chave}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"xlsx_apuracao_icms_{chave}",
+            )
+        with col_meta:
+            st.caption(f"{len(df)} CFOP no período.")
+
+    with tab_icms_entradas:
+        try:
+            df_icms_entrada = _apuracao_icms_entrada_cached(
+                _filiais_atual, data_inicial, data_final, fornecedor
+            )
+        except Exception:
+            st.warning("Não foi possível consultar a apuração de ICMS de entrada.")
+            df_icms_entrada = pd.DataFrame()
+        _exibir_apuracao_icms(df_icms_entrada, "entrada", "Imposto Creditado")
+
+    with tab_icms_saidas:
+        try:
+            df_icms_saida = _apuracao_icms_saida_cached(
+                _filiais_atual, data_inicial, data_final, cliente
+            )
+        except Exception:
+            st.warning("Não foi possível consultar a apuração de ICMS de saída.")
+            df_icms_saida = pd.DataFrame()
+        _exibir_apuracao_icms(df_icms_saida, "saida", "Imposto Debitado")
+
+    with tab_apuracao_resumo:
+        st.caption(
+            "Resumo do período (débito das saídas menos crédito das "
+            "entradas). Não inclui saldo credor/devedor de meses "
+            "anteriores - não foi encontrada nesta instalação uma tabela "
+            "de apuração consolidada com esse saldo (a SF4010 é o "
+            "cadastro de TES, não uma apuração pronta)."
+        )
+        try:
+            _df_e = _apuracao_icms_entrada_cached(
+                _filiais_atual, data_inicial, data_final, fornecedor
+            )
+            _df_s = _apuracao_icms_saida_cached(
+                _filiais_atual, data_inicial, data_final, cliente
+            )
+        except Exception:
+            st.warning("Não foi possível consultar a apuração de ICMS.")
+            _df_e, _df_s = pd.DataFrame(), pd.DataFrame()
+
+        _debito = _df_s["VALOR_ICMS"].sum() if not _df_s.empty else 0.0
+        _credito = _df_e["VALOR_ICMS"].sum() if not _df_e.empty else 0.0
+        _saldo = _debito - _credito
+
+        col_r1, col_r2, col_r3 = st.columns(3)
+        with col_r1:
+            st.metric("Débito do ICMS (saídas)", moeda(_debito))
+        with col_r2:
+            st.metric("Crédito do ICMS (entradas)", moeda(_credito))
+        with col_r3:
+            st.metric(
+                "Saldo do período",
+                moeda(_saldo),
+                delta="A recolher" if _saldo > 0 else "Credor",
+                delta_color="off",
+            )
