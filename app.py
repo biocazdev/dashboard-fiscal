@@ -1428,33 +1428,23 @@ if _alertas:
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Abas: Visão Geral | Conciliação Fiscal x Contábil | Documentos | Retenções
-# | Retenções x Financeiro | CT-e
+# Abas: Visão Geral | Fiscal (Conciliação, Documentos, CT-e, Apuração de ICMS)
+# | Retenções (Retenções, Retenções x Financeiro)
 # ---------------------------------------------------------------------------
-# Cada bloco ``with tab_*:`` abaixo grava a aba atual em
-# ``st.session_state["aba_ativa"]``. Isso já foi usado no passado para o
-# botão de PDF decidir o que incluir no relatório conforme a aba em que o
-# usuário estava; hoje o PDF sempre inclui conciliação e retenções
-# independente da aba (ver DOCUMENTACAO.md, seção 13), então essa chave
-# ficou sem leitor - mantida aqui por não ter custo e por poder voltar a
-# ser útil (ex.: lembrar a última aba visitada entre reruns).
+# Agrupado por tema em 22/09/2026 (eram 7 abas soltas no topo - virou 3
+# grupos com sub-abas dentro). Cada bloco ``with tab_*:`` interno continua
+# gravando a aba atual em ``st.session_state["aba_ativa"]`` (ver histórico
+# de uso dessa chave nos comentários originais de cada seção, preservados
+# abaixo).
 (
     tab_visao,
-    tab_conciliacao,
-    tab_documentos,
-    tab_retencoes,
-    tab_val_financeiro,
-    tab_cte,
-    tab_apuracao_icms,
+    tab_fiscal,
+    tab_retencoes_grupo,
 ) = st.tabs(
     [
         "📊 Visão Geral",
-        "🔄 Conciliação Fiscal x Contábil",
-        "📄 Documentos",
+        "🧮 Fiscal",
         "🧾 Retenções",
-        "🏦 Retenções x Financeiro",
-        "🚚 CT-e",
-        "🧮 Apuração de ICMS",
     ]
 )
 
@@ -1665,43 +1655,260 @@ with tab_visao:
     if sem_registros:
         st.info("Nenhuma nota fiscal encontrada no período e filial(is) selecionados.")
 
-# ------------------------- Conciliação Fiscal x Contábil -------------------------
-with tab_conciliacao:
-    st.session_state["aba_ativa"] = "conciliacao"
-    _render_conciliacao(_filiais_atual, data_inicial, data_final, fornecedor, cliente)
 
-# -------------------------------- Documentos --------------------------------
-# Lista "crua" de notas de entrada e saída do período (uma linha por nota),
-# sem cruzar com contabilidade - é o extrato para quem quer conferir/
-# exportar o detalhamento fiscal em si, diferente da aba de Conciliação
-# (que já compara fiscal x contábil).
-with tab_documentos:
-    st.session_state["aba_ativa"] = "documentos"
-    with st.expander("Ver detalhamento das notas (entradas e saídas)"):
+with tab_fiscal:
+    (
+        tab_conciliacao,
+        tab_documentos,
+        tab_cte,
+        tab_apuracao_icms,
+    ) = st.tabs(
+        [
+            "🔄 Conciliação Fiscal x Contábil",
+            "📄 Documentos",
+            "🚚 CT-e",
+            "🧮 Apuração de ICMS",
+        ]
+    )
+
+    # ------------------------- Conciliação Fiscal x Contábil -------------------------
+    with tab_conciliacao:
+        st.session_state["aba_ativa"] = "conciliacao"
+        _render_conciliacao(_filiais_atual, data_inicial, data_final, fornecedor, cliente)
+
+    # -------------------------------- Documentos --------------------------------
+    # Lista "crua" de notas de entrada e saída do período (uma linha por nota),
+    # sem cruzar com contabilidade - é o extrato para quem quer conferir/
+    # exportar o detalhamento fiscal em si, diferente da aba de Conciliação
+    # (que já compara fiscal x contábil).
+    with tab_documentos:
+        st.session_state["aba_ativa"] = "documentos"
+        with st.expander("Ver detalhamento das notas (entradas e saídas)"):
+            try:
+                detalhe = _detalhamento_cached(
+                    _filiais_atual, data_inicial, data_final, fornecedor, cliente, tipo_nfe_param
+                )
+            except Exception:
+                st.warning("Não foi possível carregar o detalhamento das notas.")
+                detalhe = None
+
+            if detalhe is not None and not detalhe.empty:
+                st.dataframe(
+                    detalhe,
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "TIPO": "Tipo",
+                        "DOC": "Documento",
+                        "SERIE": "Série",
+                        "EMISSAO": st.column_config.DateColumn(
+                            "Emissão", format="DD/MM/YYYY"
+                        ),
+                        "PARCEIRO": "Cliente/Fornecedor",
+                        "LOJA_PARCEIRO": "Loja",
+                        "VALOR": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                        "ICMS": st.column_config.NumberColumn("ICMS", format="R$ %.2f"),
+                    },
+                )
+
+                col_csv, col_xlsx, col_meta = st.columns([1, 1, 2])
+                with col_csv:
+                    st.download_button(
+                        "Baixar CSV",
+                        data=detalhe.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="detalhamento_notas.csv",
+                        mime="text/csv",
+                    )
+                with col_xlsx:
+                    _buf_det = io.BytesIO()
+                    detalhe.to_excel(_buf_det, index=False, engine="openpyxl")
+                    st.download_button(
+                        "Baixar Excel",
+                        data=_buf_det.getvalue(),
+                        file_name="detalhamento_notas.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                with col_meta:
+                    total_entrada = detalhe.loc[
+                        detalhe["TIPO"] == "Entrada", "VALOR"
+                    ].sum()
+                    total_saida = detalhe.loc[detalhe["TIPO"] == "Saida", "VALOR"].sum()
+                    st.caption(
+                        f"Total de entradas: {moeda(total_entrada)} | "
+                        f"Total de saídas: {moeda(total_saida)}"
+                    )
+            elif detalhe is not None:
+                st.info("Nenhuma nota encontrada no período e filial(is) selecionados.")
+
+
+    # --------------------------------- CT-e -------------------------------------
+    # Conhecimento de Transporte Eletrônico - pedido pelo cliente em 27/08/2026.
+    # Ver services/cte_service.py para o histórico completo da investigação:
+    # este Protheus não tem o módulo de Transporte (TMS/GTMS), então a fonte é
+    # a tabela genérica de documentos do gerador de SPED Fiscal (C20),
+    # filtrada pelo campo C20_TPCTE. A tabela está VAZIA nesta instalação
+    # (nenhum CT-e lançado ainda no Protheus) - a aba foi construída mesmo
+    # assim, a pedido explícito do cliente, para já funcionar automaticamente
+    # assim que o módulo passar a ser alimentado, sem precisar mexer no
+    # dashboard de novo.
+    with tab_cte:
+        st.session_state["aba_ativa"] = "cte"
+        st.subheader("CT-e (Conhecimento de Transporte Eletrônico)")
+        st.caption(
+            "Fonte: registro genérico de documento fiscal do gerador de SPED "
+            "Fiscal (tabela C20), filtrado pelo tipo de CT-e - esta instalação "
+            "não usa o módulo de Transporte (TMS) do Protheus. Campos ainda "
+            "não confirmados contra um CT-e real (a tabela está vazia nesta "
+            "base) - conferir assim que o primeiro CT-e for lançado."
+        )
+
         try:
-            detalhe = _detalhamento_cached(
-                _filiais_atual, data_inicial, data_final, fornecedor, cliente, tipo_nfe_param
-            )
+            df_cte = _ctes_cached(_filiais_atual, data_inicial, data_final, fornecedor)
         except Exception:
-            st.warning("Não foi possível carregar o detalhamento das notas.")
-            detalhe = None
+            st.warning("Não foi possível consultar os CT-e.")
+            df_cte = pd.DataFrame()
 
-        if detalhe is not None and not detalhe.empty:
+        if df_cte.empty:
+            st.info(
+                "Nenhum CT-e encontrado no período e filial(is) selecionados. "
+                "Isso é esperado enquanto o Protheus não registrar nenhum CT-e "
+                "nesta base - a aba já está pronta para exibir automaticamente "
+                "assim que houver o primeiro lançamento."
+            )
+        else:
+            with st.expander("📊 Resumo", expanded=True):
+                col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+                with col_c1:
+                    st.metric("🚚 CT-e", quantidade(len(df_cte)))
+                with col_c2:
+                    st.metric("💰 Valor total do frete", moeda(df_cte["VALOR_FRETE"].sum()))
+                with col_c3:
+                    st.metric("📄 Valor total dos documentos", moeda(df_cte["VALOR_DOCUMENTO"].sum()))
+                with col_c4:
+                    st.metric("🛡️ Valor total do seguro", moeda(df_cte["VALOR_SEGURO"].sum()))
+
+            with st.expander("📋 Ver CT-e", expanded=False):
+                rotulo_transportadora = df_cte.apply(
+                    lambda r: f"{r['TRANSPORTADORA']} - {r['TRANSPORTADORA_NOME']}"
+                    if r["TRANSPORTADORA_NOME"]
+                    else r["TRANSPORTADORA"],
+                    axis=1,
+                )
+                df_exibir_cte = df_cte.assign(TRANSPORTADORA_ROTULO=rotulo_transportadora)[
+                    [
+                        "EMISSAO", "SERIE", "NUMERO", "TRANSPORTADORA_ROTULO", "CNPJ",
+                        "SITUACAO", "TIPO_CTE", "MODAL",
+                        "VALOR_FRETE", "VALOR_SEGURO", "VALOR_DOCUMENTO",
+                        "CHAVE_NFE_REFERENCIADA", "PROTOCOLO_SEFAZ", "DATA_CANCELAMENTO",
+                    ]
+                ]
+
+                st.dataframe(
+                    df_exibir_cte,
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "EMISSAO": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
+                        "SERIE": "Série",
+                        "NUMERO": "Número",
+                        "TRANSPORTADORA_ROTULO": "Transportadora",
+                        "CNPJ": "CNPJ",
+                        "SITUACAO": "Situação",
+                        "TIPO_CTE": "Tipo CT-e",
+                        "MODAL": "Modal",
+                        "VALOR_FRETE": st.column_config.NumberColumn("Frete", format="R$ %.2f"),
+                        "VALOR_SEGURO": st.column_config.NumberColumn("Seguro", format="R$ %.2f"),
+                        "VALOR_DOCUMENTO": st.column_config.NumberColumn(
+                            "Valor Total", format="R$ %.2f"
+                        ),
+                        "CHAVE_NFE_REFERENCIADA": "Chave NF-e Vinculada",
+                        "PROTOCOLO_SEFAZ": "Protocolo SEFAZ",
+                        "DATA_CANCELAMENTO": st.column_config.DateColumn(
+                            "Cancelamento", format="DD/MM/YYYY"
+                        ),
+                    },
+                )
+                st.caption(
+                    "Coluna \"Chave NF-e Vinculada\" ainda não confirmada - é a "
+                    "aposta para o vínculo com a nota fiscal transportada "
+                    "(campo C20_CHVREF), mas pode também apontar para outro "
+                    "CT-e em casos de redespacho. Impostos do frete (ICMS) "
+                    "ainda não localizados em nenhuma tabela desta base - ver "
+                    "services/cte_service.py."
+                )
+
+                col_csv_cte, col_xlsx_cte, col_meta_cte = st.columns([1, 1, 2])
+                with col_csv_cte:
+                    st.download_button(
+                        "Baixar CSV",
+                        data=df_exibir_cte.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="cte.csv",
+                        mime="text/csv",
+                    )
+                with col_xlsx_cte:
+                    _buf_cte = io.BytesIO()
+                    df_exibir_cte.to_excel(_buf_cte, index=False, engine="openpyxl")
+                    st.download_button(
+                        "Baixar Excel",
+                        data=_buf_cte.getvalue(),
+                        file_name="cte.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                with col_meta_cte:
+                    st.caption(f"{len(df_cte)} CT-e no período.")
+
+
+    # --------------------------- Apuração de ICMS -------------------------------
+    # Réplica da tela nativa do Protheus "Apuração de ICMS", por CFOP. Só as
+    # colunas confirmadas contra o banco real foram implementadas (Valor
+    # Contábil, Base de Cálculo, Imposto Debitado/Creditado) - ver
+    # services/apuracao_icms_service.py para o que ficou pendente (Isentas,
+    # Outras, ICMS-ST) e por quê.
+    with tab_apuracao_icms:
+        st.session_state["aba_ativa"] = "apuracao_icms"
+        st.subheader("Apuração de ICMS")
+        st.caption(
+            "Quebra por CFOP com Valor Contábil (D1/D2_TOTAL), Base de Cálculo "
+            "(D1/D2_BASEICM) e Imposto Creditado/Debitado (D1/D2_VALICM) - "
+            "campos confirmados via SQL contra o banco real. As colunas "
+            "\"Isentas\" e \"Outras\" da tela nativa do Protheus e as sub-abas "
+            "de ICMS-ST ainda não têm fonte confirmada nesta instalação - ver "
+            "services/apuracao_icms_service.py para o detalhe da investigação."
+        )
+
+        tab_icms_entradas, tab_icms_saidas, tab_apuracao_resumo = st.tabs(
+            ["ICMS-Entradas", "ICMS-Saídas", "Apuração-ICMS"]
+        )
+
+        def _exibir_apuracao_icms(df: pd.DataFrame, chave: str, rotulo_imposto: str) -> None:
+            """Renderiza a tabela por CFOP + export, comum às sub-abas entrada/saída."""
+            if df.empty:
+                st.info("Nenhum documento encontrado no período e filial(is) selecionados.")
+                return
+
+            col_1, col_2, col_3 = st.columns(3)
+            with col_1:
+                st.metric("Valor Contábil", moeda(df["VALOR_CONTABIL"].sum()))
+            with col_2:
+                st.metric("Base de Cálculo", moeda(df["BASE_ICMS"].sum()))
+            with col_3:
+                st.metric(rotulo_imposto, moeda(df["VALOR_ICMS"].sum()))
+
             st.dataframe(
-                detalhe,
+                df,
                 hide_index=True,
                 width="stretch",
                 column_config={
-                    "TIPO": "Tipo",
-                    "DOC": "Documento",
-                    "SERIE": "Série",
-                    "EMISSAO": st.column_config.DateColumn(
-                        "Emissão", format="DD/MM/YYYY"
+                    "CFOP": "CFOP",
+                    "QTD_NOTAS": st.column_config.NumberColumn("Notas", format="%d"),
+                    "QTD_ITENS": st.column_config.NumberColumn("Itens", format="%d"),
+                    "VALOR_CONTABIL": st.column_config.NumberColumn(
+                        "Valor Contábil", format="R$ %.2f"
                     ),
-                    "PARCEIRO": "Cliente/Fornecedor",
-                    "LOJA_PARCEIRO": "Loja",
-                    "VALOR": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-                    "ICMS": st.column_config.NumberColumn("ICMS", format="R$ %.2f"),
+                    "BASE_ICMS": st.column_config.NumberColumn(
+                        "Base de Cálculo", format="R$ %.2f"
+                    ),
+                    "VALOR_ICMS": st.column_config.NumberColumn(rotulo_imposto, format="R$ %.2f"),
                 },
             )
 
@@ -1709,530 +1916,341 @@ with tab_documentos:
             with col_csv:
                 st.download_button(
                     "Baixar CSV",
-                    data=detalhe.to_csv(index=False).encode("utf-8-sig"),
-                    file_name="detalhamento_notas.csv",
+                    data=df.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"apuracao_icms_{chave}.csv",
                     mime="text/csv",
+                    key=f"csv_apuracao_icms_{chave}",
                 )
             with col_xlsx:
-                _buf_det = io.BytesIO()
-                detalhe.to_excel(_buf_det, index=False, engine="openpyxl")
+                _buf = io.BytesIO()
+                df.to_excel(_buf, index=False, engine="openpyxl")
                 st.download_button(
                     "Baixar Excel",
-                    data=_buf_det.getvalue(),
-                    file_name="detalhamento_notas.xlsx",
+                    data=_buf.getvalue(),
+                    file_name=f"apuracao_icms_{chave}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"xlsx_apuracao_icms_{chave}",
                 )
             with col_meta:
-                total_entrada = detalhe.loc[
-                    detalhe["TIPO"] == "Entrada", "VALOR"
-                ].sum()
-                total_saida = detalhe.loc[detalhe["TIPO"] == "Saida", "VALOR"].sum()
-                st.caption(
-                    f"Total de entradas: {moeda(total_entrada)} | "
-                    f"Total de saídas: {moeda(total_saida)}"
+                st.caption(f"{len(df)} CFOP no período.")
+
+        with tab_icms_entradas:
+            try:
+                df_icms_entrada = _apuracao_icms_entrada_cached(
+                    _filiais_atual, data_inicial, data_final, fornecedor
                 )
-        elif detalhe is not None:
-            st.info("Nenhuma nota encontrada no período e filial(is) selecionados.")
+            except Exception:
+                st.warning("Não foi possível consultar a apuração de ICMS de entrada.")
+                df_icms_entrada = pd.DataFrame()
+            _exibir_apuracao_icms(df_icms_entrada, "entrada", "Imposto Creditado")
 
-# -------------------------------- Retenções ---------------------------------
-# Mostra os títulos de contas a pagar (fornecedor) que tiveram IR/PIS/
-# COFINS/CSLL retidos na fonte - só isso, sem checar se a retenção já foi
-# efetivamente gerada/paga no módulo financeiro (essa checagem é a próxima
-# aba, "Retenções x Financeiro").
-with tab_retencoes:
-    st.session_state["aba_ativa"] = "retencoes"
-    st.subheader("Retenções sobre pagamentos a fornecedores PJ")
+        with tab_icms_saidas:
+            try:
+                df_icms_saida = _apuracao_icms_saida_cached(
+                    _filiais_atual, data_inicial, data_final, cliente
+                )
+            except Exception:
+                st.warning("Não foi possível consultar a apuração de ICMS de saída.")
+                df_icms_saida = pd.DataFrame()
+            _exibir_apuracao_icms(df_icms_saida, "saida", "Imposto Debitado")
 
-    try:
-        df_retencoes = _retencoes_cached(_filiais_atual, data_inicial, data_final, fornecedor)
-    except Exception:
-        st.warning("Não foi possível consultar as retenções.")
-        df_retencoes = pd.DataFrame()
+        with tab_apuracao_resumo:
+            st.caption(
+                "Resumo do período (débito das saídas menos crédito das "
+                "entradas). Não inclui saldo credor/devedor de meses "
+                "anteriores - não foi encontrada nesta instalação uma tabela "
+                "de apuração consolidada com esse saldo (a SF4010 é o "
+                "cadastro de TES, não uma apuração pronta)."
+            )
+            try:
+                _df_e = _apuracao_icms_entrada_cached(
+                    _filiais_atual, data_inicial, data_final, fornecedor
+                )
+                _df_s = _apuracao_icms_saida_cached(
+                    _filiais_atual, data_inicial, data_final, cliente
+                )
+            except Exception:
+                st.warning("Não foi possível consultar a apuração de ICMS.")
+                _df_e, _df_s = pd.DataFrame(), pd.DataFrame()
 
-    if df_retencoes.empty:
-        st.info(
-            "Nenhum título com retenção de IR/PIS/COFINS/CSLL encontrado no "
-            "período e filial(is) selecionados."
-        )
-    else:
-        with st.expander("📊 Resumo", expanded=True):
-            col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+            _debito = _df_s["VALOR_ICMS"].sum() if not _df_s.empty else 0.0
+            _credito = _df_e["VALOR_ICMS"].sum() if not _df_e.empty else 0.0
+            _saldo = _debito - _credito
+
+            col_r1, col_r2, col_r3 = st.columns(3)
             with col_r1:
-                st.metric("💼 Títulos", quantidade(len(df_retencoes)))
+                st.metric("Débito do ICMS (saídas)", moeda(_debito))
             with col_r2:
-                st.metric("🧾 IR retido", moeda(df_retencoes["VALOR_IR"].sum()))
+                st.metric("Crédito do ICMS (entradas)", moeda(_credito))
             with col_r3:
-                st.metric("📗 PIS retido", moeda(df_retencoes["VALOR_PIS"].sum()))
-            with col_r4:
-                st.metric("📘 COFINS retido", moeda(df_retencoes["VALOR_COFINS"].sum()))
-            with col_r5:
-                st.metric("🏛️ CSLL retido", moeda(df_retencoes["VALOR_CSLL"].sum()))
-            st.metric("💰 Total retido", moeda(df_retencoes["VALOR_TOTAL_RETIDO"].sum()))
+                st.metric(
+                    "Saldo do período",
+                    moeda(_saldo),
+                    delta="A recolher" if _saldo > 0 else "Credor",
+                    delta_color="off",
+                )
 
-        with st.expander("📋 Ver títulos com retenção", expanded=False):
-            rotulo_fornecedor_retencao = df_retencoes.apply(
-                lambda r: f"{r['FORNECEDOR']} - {r['NOME_FORNECEDOR']}"
-                if r["NOME_FORNECEDOR"]
-                else r["FORNECEDOR"],
-                axis=1,
+with tab_retencoes_grupo:
+    (
+        tab_retencoes,
+        tab_val_financeiro,
+    ) = st.tabs(
+        [
+            "🧾 Retenções",
+            "🏦 Retenções x Financeiro",
+        ]
+    )
+
+    # -------------------------------- Retenções ---------------------------------
+    # Mostra os títulos de contas a pagar (fornecedor) que tiveram IR/PIS/
+    # COFINS/CSLL retidos na fonte - só isso, sem checar se a retenção já foi
+    # efetivamente gerada/paga no módulo financeiro (essa checagem é a próxima
+    # aba, "Retenções x Financeiro").
+    with tab_retencoes:
+        st.session_state["aba_ativa"] = "retencoes"
+        st.subheader("Retenções sobre pagamentos a fornecedores PJ")
+
+        try:
+            df_retencoes = _retencoes_cached(_filiais_atual, data_inicial, data_final, fornecedor)
+        except Exception:
+            st.warning("Não foi possível consultar as retenções.")
+            df_retencoes = pd.DataFrame()
+
+        if df_retencoes.empty:
+            st.info(
+                "Nenhum título com retenção de IR/PIS/COFINS/CSLL encontrado no "
+                "período e filial(is) selecionados."
             )
-            df_exibir_retencoes = df_retencoes.assign(FORNECEDOR_ROTULO=rotulo_fornecedor_retencao)[
-                [
-                    "EMISSAO", "DOCUMENTO", "FORNECEDOR_ROTULO", "CNPJ", "NATUREZA", "COD_R",
-                    "BASE_IR", "VALOR_IR", "BASE_PIS", "VALOR_PIS",
-                    "BASE_COFINS", "VALOR_COFINS", "BASE_CSLL", "VALOR_CSLL",
-                    "VALOR_TOTAL_RETIDO",
+        else:
+            with st.expander("📊 Resumo", expanded=True):
+                col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+                with col_r1:
+                    st.metric("💼 Títulos", quantidade(len(df_retencoes)))
+                with col_r2:
+                    st.metric("🧾 IR retido", moeda(df_retencoes["VALOR_IR"].sum()))
+                with col_r3:
+                    st.metric("📗 PIS retido", moeda(df_retencoes["VALOR_PIS"].sum()))
+                with col_r4:
+                    st.metric("📘 COFINS retido", moeda(df_retencoes["VALOR_COFINS"].sum()))
+                with col_r5:
+                    st.metric("🏛️ CSLL retido", moeda(df_retencoes["VALOR_CSLL"].sum()))
+                st.metric("💰 Total retido", moeda(df_retencoes["VALOR_TOTAL_RETIDO"].sum()))
+
+            with st.expander("📋 Ver títulos com retenção", expanded=False):
+                rotulo_fornecedor_retencao = df_retencoes.apply(
+                    lambda r: f"{r['FORNECEDOR']} - {r['NOME_FORNECEDOR']}"
+                    if r["NOME_FORNECEDOR"]
+                    else r["FORNECEDOR"],
+                    axis=1,
+                )
+                df_exibir_retencoes = df_retencoes.assign(FORNECEDOR_ROTULO=rotulo_fornecedor_retencao)[
+                    [
+                        "EMISSAO", "DOCUMENTO", "FORNECEDOR_ROTULO", "CNPJ", "NATUREZA", "COD_R",
+                        "BASE_IR", "VALOR_IR", "BASE_PIS", "VALOR_PIS",
+                        "BASE_COFINS", "VALOR_COFINS", "BASE_CSLL", "VALOR_CSLL",
+                        "VALOR_TOTAL_RETIDO",
+                    ]
                 ]
-            ]
 
-            st.dataframe(
-                df_exibir_retencoes,
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "EMISSAO": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
-                    "DOCUMENTO": "Documento",
-                    "FORNECEDOR_ROTULO": "Fornecedor",
-                    "CNPJ": "CNPJ/CPF",
-                    "NATUREZA": "Natureza",
-                    "COD_R": "Cod. R",
-                    "BASE_IR": st.column_config.NumberColumn("IR Base", format="R$ %.2f"),
-                    "VALOR_IR": st.column_config.NumberColumn("IR Valor", format="R$ %.2f"),
-                    "BASE_PIS": st.column_config.NumberColumn("PIS Base", format="R$ %.2f"),
-                    "VALOR_PIS": st.column_config.NumberColumn("PIS", format="R$ %.2f"),
-                    "BASE_COFINS": st.column_config.NumberColumn("COFINS Base", format="R$ %.2f"),
-                    "VALOR_COFINS": st.column_config.NumberColumn("COFINS", format="R$ %.2f"),
-                    "BASE_CSLL": st.column_config.NumberColumn("CSLL Base", format="R$ %.2f"),
-                    "VALOR_CSLL": st.column_config.NumberColumn("CSLL", format="R$ %.2f"),
-                    "VALOR_TOTAL_RETIDO": st.column_config.NumberColumn("Total Retido", format="R$ %.2f"),
-                },
-            )
-
-            col_csv_ret, col_xlsx_ret, col_meta_ret = st.columns([1, 1, 2])
-            with col_csv_ret:
-                st.download_button(
-                    "Baixar CSV",
-                    data=df_exibir_retencoes.to_csv(index=False).encode("utf-8-sig"),
-                    file_name="retencoes.csv",
-                    mime="text/csv",
+                st.dataframe(
+                    df_exibir_retencoes,
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "EMISSAO": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
+                        "DOCUMENTO": "Documento",
+                        "FORNECEDOR_ROTULO": "Fornecedor",
+                        "CNPJ": "CNPJ/CPF",
+                        "NATUREZA": "Natureza",
+                        "COD_R": "Cod. R",
+                        "BASE_IR": st.column_config.NumberColumn("IR Base", format="R$ %.2f"),
+                        "VALOR_IR": st.column_config.NumberColumn("IR Valor", format="R$ %.2f"),
+                        "BASE_PIS": st.column_config.NumberColumn("PIS Base", format="R$ %.2f"),
+                        "VALOR_PIS": st.column_config.NumberColumn("PIS", format="R$ %.2f"),
+                        "BASE_COFINS": st.column_config.NumberColumn("COFINS Base", format="R$ %.2f"),
+                        "VALOR_COFINS": st.column_config.NumberColumn("COFINS", format="R$ %.2f"),
+                        "BASE_CSLL": st.column_config.NumberColumn("CSLL Base", format="R$ %.2f"),
+                        "VALOR_CSLL": st.column_config.NumberColumn("CSLL", format="R$ %.2f"),
+                        "VALOR_TOTAL_RETIDO": st.column_config.NumberColumn("Total Retido", format="R$ %.2f"),
+                    },
                 )
-            with col_xlsx_ret:
-                _buf_ret = io.BytesIO()
-                df_exibir_retencoes.to_excel(_buf_ret, index=False, engine="openpyxl")
-                st.download_button(
-                    "Baixar Excel",
-                    data=_buf_ret.getvalue(),
-                    file_name="retencoes.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-            with col_meta_ret:
-                st.caption(f"{len(df_retencoes)} título(s) com retenção no período.")
 
-# --------------------------- Retenções x Financeiro ---------------------------
-# Para cada título com retenção (aba anterior), verifica se o Protheus
-# realmente gerou o título "irmão" de imposto no Financeiro e se ele já foi
-# baixado (pago). É o cruzamento que revela retenção calculada mas nunca
-# recolhida - ver a lógica de status em retencao_service.
-with tab_val_financeiro:
-    st.session_state["aba_ativa"] = "validacao_financeiro"
-    st.subheader("Retenções x Financeiro")
-
-    try:
-        df_val_fin = _validacao_financeiro_cached(
-            _filiais_atual, data_inicial, data_final, fornecedor
-        )
-    except Exception:
-        st.warning("Não foi possível consultar a validação Retenções x Financeiro.")
-        df_val_fin = pd.DataFrame()
-
-    if df_val_fin.empty:
-        st.info(
-            "Nenhum título com retenção de IR/PIS/COFINS/CSLL/ISS encontrado no "
-            "período e filial(is) selecionados."
-        )
-    else:
-        _qtd_ok = int((df_val_fin["STATUS"] == retencao_service._STATUS_OK).sum())
-        _qtd_aguardando = int(
-            (df_val_fin["STATUS"] == retencao_service._STATUS_AGUARDANDO_BAIXA).sum()
-        )
-        _qtd_divergente = int((df_val_fin["STATUS"] == retencao_service._STATUS_DIVERGENTE).sum())
-        _qtd_nao_gerado = int((df_val_fin["STATUS"] == retencao_service._STATUS_NAO_GERADO).sum())
-
-        with st.expander("📊 Resumo", expanded=True):
-            col_v1, col_v2, col_v3, col_v4, col_v5 = st.columns(5)
-            with col_v1:
-                st.metric("💼 Títulos com retenção", quantidade(len(df_val_fin)))
-            with col_v2:
-                st.metric("🔴 Não gerado no Financeiro", quantidade(_qtd_nao_gerado))
-            with col_v3:
-                st.metric("🟡 Divergente", quantidade(_qtd_divergente))
-            with col_v4:
-                st.metric("🔵 Aguardando baixa", quantidade(_qtd_aguardando))
-            with col_v5:
-                st.metric("🟢 OK", quantidade(_qtd_ok))
-            st.caption(
-                "Cada retenção (IR/PIS/COFINS/CSLL/ISS) é gerada pelo Protheus como "
-                "um título \"irmão\" na própria SE2010 (mesmo número, tipo TX), "
-                "com baixa própria - independente da baixa do título original. "
-                "🔴 Não gerado = nenhum título de taxa encontrado ainda. "
-                "🟡 Divergente = encontrado, mas o valor não bate com o retido. "
-                "🔵 Aguardando baixa = gerado e o valor bate, só falta pagar - "
-                "não é tratado como problema. 🟢 OK = gerado, valor batendo e já pago."
-            )
-
-        with st.expander("📋 Ver títulos e status", expanded=False):
-            filtro_val_fin = st.segmented_control(
-                "Status",
-                options=[
-                    "⚠️ Com problema",
-                    "🔴 Não gerado",
-                    "🟡 Divergente",
-                    "🔵 Aguardando baixa",
-                    "🟢 OK",
-                    "Todos",
-                ],
-                default="⚠️ Com problema",
-                selection_mode="single",
-                key="filtro_validacao_financeiro",
-            )
-            if filtro_val_fin == "⚠️ Com problema":
-                df_val_fin_filtrado = df_val_fin[
-                    df_val_fin["STATUS"].isin(
-                        [
-                            retencao_service._STATUS_NAO_GERADO,
-                            retencao_service._STATUS_DIVERGENTE,
-                        ]
+                col_csv_ret, col_xlsx_ret, col_meta_ret = st.columns([1, 1, 2])
+                with col_csv_ret:
+                    st.download_button(
+                        "Baixar CSV",
+                        data=df_exibir_retencoes.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="retencoes.csv",
+                        mime="text/csv",
                     )
-                ]
-            elif filtro_val_fin == "🔴 Não gerado":
-                df_val_fin_filtrado = df_val_fin[
-                    df_val_fin["STATUS"] == retencao_service._STATUS_NAO_GERADO
-                ]
-            elif filtro_val_fin == "🟡 Divergente":
-                df_val_fin_filtrado = df_val_fin[
-                    df_val_fin["STATUS"] == retencao_service._STATUS_DIVERGENTE
-                ]
-            elif filtro_val_fin == "🔵 Aguardando baixa":
-                df_val_fin_filtrado = df_val_fin[
-                    df_val_fin["STATUS"] == retencao_service._STATUS_AGUARDANDO_BAIXA
-                ]
-            elif filtro_val_fin == "🟢 OK":
-                df_val_fin_filtrado = df_val_fin[
-                    df_val_fin["STATUS"] == retencao_service._STATUS_OK
-                ]
-            else:
-                df_val_fin_filtrado = df_val_fin
+                with col_xlsx_ret:
+                    _buf_ret = io.BytesIO()
+                    df_exibir_retencoes.to_excel(_buf_ret, index=False, engine="openpyxl")
+                    st.download_button(
+                        "Baixar Excel",
+                        data=_buf_ret.getvalue(),
+                        file_name="retencoes.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                with col_meta_ret:
+                    st.caption(f"{len(df_retencoes)} título(s) com retenção no período.")
 
-            rotulo_fornecedor_val_fin = df_val_fin_filtrado.apply(
-                lambda r: f"{r['FORNECEDOR']} - {r['NOME_FORNECEDOR']}"
-                if r["NOME_FORNECEDOR"]
-                else r["FORNECEDOR"],
-                axis=1,
-            )
-            df_exibir_val_fin = df_val_fin_filtrado.assign(
-                FORNECEDOR_ROTULO=rotulo_fornecedor_val_fin
-            )[
-                [
-                    "EMISSAO", "DOCUMENTO", "FORNECEDOR_ROTULO",
-                    "VALOR_TITULO", "VALOR_ISS", "VALOR_RETIDO", "VALOR_LIQUIDO_ESPERADO",
-                    "QTD_TITULOS_RETENCAO", "VALOR_GERADO_FINANCEIRO",
-                    "QTD_BAIXADOS", "DATA_ULTIMA_BAIXA", "DIFERENCA",
-                    "STATUS",
-                ]
-            ]
+    # --------------------------- Retenções x Financeiro ---------------------------
+    # Para cada título com retenção (aba anterior), verifica se o Protheus
+    # realmente gerou o título "irmão" de imposto no Financeiro e se ele já foi
+    # baixado (pago). É o cruzamento que revela retenção calculada mas nunca
+    # recolhida - ver a lógica de status em retencao_service.
+    with tab_val_financeiro:
+        st.session_state["aba_ativa"] = "validacao_financeiro"
+        st.subheader("Retenções x Financeiro")
 
-            st.dataframe(
-                df_exibir_val_fin,
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "EMISSAO": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
-                    "DOCUMENTO": "Documento",
-                    "FORNECEDOR_ROTULO": "Fornecedor",
-                    "VALOR_TITULO": st.column_config.NumberColumn("Valor Título", format="R$ %.2f"),
-                    "VALOR_ISS": st.column_config.NumberColumn("ISS Retido", format="R$ %.2f"),
-                    "VALOR_RETIDO": st.column_config.NumberColumn("Total Retido", format="R$ %.2f"),
-                    "VALOR_LIQUIDO_ESPERADO": st.column_config.NumberColumn(
-                        "Líquido Esperado", format="R$ %.2f"
-                    ),
-                    "QTD_TITULOS_RETENCAO": "Qtd. Retenções Geradas",
-                    "VALOR_GERADO_FINANCEIRO": st.column_config.NumberColumn(
-                        "Valor Gerado no Financeiro", format="R$ %.2f"
-                    ),
-                    "QTD_BAIXADOS": "Qtd. Já Baixadas",
-                    "DATA_ULTIMA_BAIXA": st.column_config.DateColumn(
-                        "Última Baixa", format="DD/MM/YYYY"
-                    ),
-                    "DIFERENCA": st.column_config.NumberColumn("Diferença", format="R$ %.2f"),
-                    "STATUS": "Status",
-                },
-            )
-
-            col_csv_vf, col_xlsx_vf, col_meta_vf = st.columns([1, 1, 2])
-            with col_csv_vf:
-                st.download_button(
-                    "Baixar CSV",
-                    data=df_exibir_val_fin.to_csv(index=False).encode("utf-8-sig"),
-                    file_name="retencoes_x_financeiro.csv",
-                    mime="text/csv",
-                )
-            with col_xlsx_vf:
-                _buf_vf = io.BytesIO()
-                df_exibir_val_fin.to_excel(_buf_vf, index=False, engine="openpyxl")
-                st.download_button(
-                    "Baixar Excel",
-                    data=_buf_vf.getvalue(),
-                    file_name="retencoes_x_financeiro.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-            with col_meta_vf:
-                st.caption(f"{len(df_exibir_val_fin)} de {len(df_val_fin)} título(s) exibido(s).")
-
-# --------------------------------- CT-e -------------------------------------
-# Conhecimento de Transporte Eletrônico - pedido pelo cliente em 27/08/2026.
-# Ver services/cte_service.py para o histórico completo da investigação:
-# este Protheus não tem o módulo de Transporte (TMS/GTMS), então a fonte é
-# a tabela genérica de documentos do gerador de SPED Fiscal (C20),
-# filtrada pelo campo C20_TPCTE. A tabela está VAZIA nesta instalação
-# (nenhum CT-e lançado ainda no Protheus) - a aba foi construída mesmo
-# assim, a pedido explícito do cliente, para já funcionar automaticamente
-# assim que o módulo passar a ser alimentado, sem precisar mexer no
-# dashboard de novo.
-with tab_cte:
-    st.session_state["aba_ativa"] = "cte"
-    st.subheader("CT-e (Conhecimento de Transporte Eletrônico)")
-    st.caption(
-        "Fonte: registro genérico de documento fiscal do gerador de SPED "
-        "Fiscal (tabela C20), filtrado pelo tipo de CT-e - esta instalação "
-        "não usa o módulo de Transporte (TMS) do Protheus. Campos ainda "
-        "não confirmados contra um CT-e real (a tabela está vazia nesta "
-        "base) - conferir assim que o primeiro CT-e for lançado."
-    )
-
-    try:
-        df_cte = _ctes_cached(_filiais_atual, data_inicial, data_final, fornecedor)
-    except Exception:
-        st.warning("Não foi possível consultar os CT-e.")
-        df_cte = pd.DataFrame()
-
-    if df_cte.empty:
-        st.info(
-            "Nenhum CT-e encontrado no período e filial(is) selecionados. "
-            "Isso é esperado enquanto o Protheus não registrar nenhum CT-e "
-            "nesta base - a aba já está pronta para exibir automaticamente "
-            "assim que houver o primeiro lançamento."
-        )
-    else:
-        with st.expander("📊 Resumo", expanded=True):
-            col_c1, col_c2, col_c3, col_c4 = st.columns(4)
-            with col_c1:
-                st.metric("🚚 CT-e", quantidade(len(df_cte)))
-            with col_c2:
-                st.metric("💰 Valor total do frete", moeda(df_cte["VALOR_FRETE"].sum()))
-            with col_c3:
-                st.metric("📄 Valor total dos documentos", moeda(df_cte["VALOR_DOCUMENTO"].sum()))
-            with col_c4:
-                st.metric("🛡️ Valor total do seguro", moeda(df_cte["VALOR_SEGURO"].sum()))
-
-        with st.expander("📋 Ver CT-e", expanded=False):
-            rotulo_transportadora = df_cte.apply(
-                lambda r: f"{r['TRANSPORTADORA']} - {r['TRANSPORTADORA_NOME']}"
-                if r["TRANSPORTADORA_NOME"]
-                else r["TRANSPORTADORA"],
-                axis=1,
-            )
-            df_exibir_cte = df_cte.assign(TRANSPORTADORA_ROTULO=rotulo_transportadora)[
-                [
-                    "EMISSAO", "SERIE", "NUMERO", "TRANSPORTADORA_ROTULO", "CNPJ",
-                    "SITUACAO", "TIPO_CTE", "MODAL",
-                    "VALOR_FRETE", "VALOR_SEGURO", "VALOR_DOCUMENTO",
-                    "CHAVE_NFE_REFERENCIADA", "PROTOCOLO_SEFAZ", "DATA_CANCELAMENTO",
-                ]
-            ]
-
-            st.dataframe(
-                df_exibir_cte,
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "EMISSAO": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
-                    "SERIE": "Série",
-                    "NUMERO": "Número",
-                    "TRANSPORTADORA_ROTULO": "Transportadora",
-                    "CNPJ": "CNPJ",
-                    "SITUACAO": "Situação",
-                    "TIPO_CTE": "Tipo CT-e",
-                    "MODAL": "Modal",
-                    "VALOR_FRETE": st.column_config.NumberColumn("Frete", format="R$ %.2f"),
-                    "VALOR_SEGURO": st.column_config.NumberColumn("Seguro", format="R$ %.2f"),
-                    "VALOR_DOCUMENTO": st.column_config.NumberColumn(
-                        "Valor Total", format="R$ %.2f"
-                    ),
-                    "CHAVE_NFE_REFERENCIADA": "Chave NF-e Vinculada",
-                    "PROTOCOLO_SEFAZ": "Protocolo SEFAZ",
-                    "DATA_CANCELAMENTO": st.column_config.DateColumn(
-                        "Cancelamento", format="DD/MM/YYYY"
-                    ),
-                },
-            )
-            st.caption(
-                "Coluna \"Chave NF-e Vinculada\" ainda não confirmada - é a "
-                "aposta para o vínculo com a nota fiscal transportada "
-                "(campo C20_CHVREF), mas pode também apontar para outro "
-                "CT-e em casos de redespacho. Impostos do frete (ICMS) "
-                "ainda não localizados em nenhuma tabela desta base - ver "
-                "services/cte_service.py."
-            )
-
-            col_csv_cte, col_xlsx_cte, col_meta_cte = st.columns([1, 1, 2])
-            with col_csv_cte:
-                st.download_button(
-                    "Baixar CSV",
-                    data=df_exibir_cte.to_csv(index=False).encode("utf-8-sig"),
-                    file_name="cte.csv",
-                    mime="text/csv",
-                )
-            with col_xlsx_cte:
-                _buf_cte = io.BytesIO()
-                df_exibir_cte.to_excel(_buf_cte, index=False, engine="openpyxl")
-                st.download_button(
-                    "Baixar Excel",
-                    data=_buf_cte.getvalue(),
-                    file_name="cte.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-            with col_meta_cte:
-                st.caption(f"{len(df_cte)} CT-e no período.")
-
-
-# --------------------------- Apuração de ICMS -------------------------------
-# Réplica da tela nativa do Protheus "Apuração de ICMS", por CFOP. Só as
-# colunas confirmadas contra o banco real foram implementadas (Valor
-# Contábil, Base de Cálculo, Imposto Debitado/Creditado) - ver
-# services/apuracao_icms_service.py para o que ficou pendente (Isentas,
-# Outras, ICMS-ST) e por quê.
-with tab_apuracao_icms:
-    st.session_state["aba_ativa"] = "apuracao_icms"
-    st.subheader("Apuração de ICMS")
-    st.caption(
-        "Quebra por CFOP com Valor Contábil (D1/D2_TOTAL), Base de Cálculo "
-        "(D1/D2_BASEICM) e Imposto Creditado/Debitado (D1/D2_VALICM) - "
-        "campos confirmados via SQL contra o banco real. As colunas "
-        "\"Isentas\" e \"Outras\" da tela nativa do Protheus e as sub-abas "
-        "de ICMS-ST ainda não têm fonte confirmada nesta instalação - ver "
-        "services/apuracao_icms_service.py para o detalhe da investigação."
-    )
-
-    tab_icms_entradas, tab_icms_saidas, tab_apuracao_resumo = st.tabs(
-        ["ICMS-Entradas", "ICMS-Saídas", "Apuração-ICMS"]
-    )
-
-    def _exibir_apuracao_icms(df: pd.DataFrame, chave: str, rotulo_imposto: str) -> None:
-        """Renderiza a tabela por CFOP + export, comum às sub-abas entrada/saída."""
-        if df.empty:
-            st.info("Nenhum documento encontrado no período e filial(is) selecionados.")
-            return
-
-        col_1, col_2, col_3 = st.columns(3)
-        with col_1:
-            st.metric("Valor Contábil", moeda(df["VALOR_CONTABIL"].sum()))
-        with col_2:
-            st.metric("Base de Cálculo", moeda(df["BASE_ICMS"].sum()))
-        with col_3:
-            st.metric(rotulo_imposto, moeda(df["VALOR_ICMS"].sum()))
-
-        st.dataframe(
-            df,
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "CFOP": "CFOP",
-                "QTD_NOTAS": st.column_config.NumberColumn("Notas", format="%d"),
-                "QTD_ITENS": st.column_config.NumberColumn("Itens", format="%d"),
-                "VALOR_CONTABIL": st.column_config.NumberColumn(
-                    "Valor Contábil", format="R$ %.2f"
-                ),
-                "BASE_ICMS": st.column_config.NumberColumn(
-                    "Base de Cálculo", format="R$ %.2f"
-                ),
-                "VALOR_ICMS": st.column_config.NumberColumn(rotulo_imposto, format="R$ %.2f"),
-            },
-        )
-
-        col_csv, col_xlsx, col_meta = st.columns([1, 1, 2])
-        with col_csv:
-            st.download_button(
-                "Baixar CSV",
-                data=df.to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"apuracao_icms_{chave}.csv",
-                mime="text/csv",
-                key=f"csv_apuracao_icms_{chave}",
-            )
-        with col_xlsx:
-            _buf = io.BytesIO()
-            df.to_excel(_buf, index=False, engine="openpyxl")
-            st.download_button(
-                "Baixar Excel",
-                data=_buf.getvalue(),
-                file_name=f"apuracao_icms_{chave}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"xlsx_apuracao_icms_{chave}",
-            )
-        with col_meta:
-            st.caption(f"{len(df)} CFOP no período.")
-
-    with tab_icms_entradas:
         try:
-            df_icms_entrada = _apuracao_icms_entrada_cached(
+            df_val_fin = _validacao_financeiro_cached(
                 _filiais_atual, data_inicial, data_final, fornecedor
             )
         except Exception:
-            st.warning("Não foi possível consultar a apuração de ICMS de entrada.")
-            df_icms_entrada = pd.DataFrame()
-        _exibir_apuracao_icms(df_icms_entrada, "entrada", "Imposto Creditado")
+            st.warning("Não foi possível consultar a validação Retenções x Financeiro.")
+            df_val_fin = pd.DataFrame()
 
-    with tab_icms_saidas:
-        try:
-            df_icms_saida = _apuracao_icms_saida_cached(
-                _filiais_atual, data_inicial, data_final, cliente
+        if df_val_fin.empty:
+            st.info(
+                "Nenhum título com retenção de IR/PIS/COFINS/CSLL/ISS encontrado no "
+                "período e filial(is) selecionados."
             )
-        except Exception:
-            st.warning("Não foi possível consultar a apuração de ICMS de saída.")
-            df_icms_saida = pd.DataFrame()
-        _exibir_apuracao_icms(df_icms_saida, "saida", "Imposto Debitado")
+        else:
+            _qtd_ok = int((df_val_fin["STATUS"] == retencao_service._STATUS_OK).sum())
+            _qtd_aguardando = int(
+                (df_val_fin["STATUS"] == retencao_service._STATUS_AGUARDANDO_BAIXA).sum()
+            )
+            _qtd_divergente = int((df_val_fin["STATUS"] == retencao_service._STATUS_DIVERGENTE).sum())
+            _qtd_nao_gerado = int((df_val_fin["STATUS"] == retencao_service._STATUS_NAO_GERADO).sum())
 
-    with tab_apuracao_resumo:
-        st.caption(
-            "Resumo do período (débito das saídas menos crédito das "
-            "entradas). Não inclui saldo credor/devedor de meses "
-            "anteriores - não foi encontrada nesta instalação uma tabela "
-            "de apuração consolidada com esse saldo (a SF4010 é o "
-            "cadastro de TES, não uma apuração pronta)."
-        )
-        try:
-            _df_e = _apuracao_icms_entrada_cached(
-                _filiais_atual, data_inicial, data_final, fornecedor
-            )
-            _df_s = _apuracao_icms_saida_cached(
-                _filiais_atual, data_inicial, data_final, cliente
-            )
-        except Exception:
-            st.warning("Não foi possível consultar a apuração de ICMS.")
-            _df_e, _df_s = pd.DataFrame(), pd.DataFrame()
+            with st.expander("📊 Resumo", expanded=True):
+                col_v1, col_v2, col_v3, col_v4, col_v5 = st.columns(5)
+                with col_v1:
+                    st.metric("💼 Títulos com retenção", quantidade(len(df_val_fin)))
+                with col_v2:
+                    st.metric("🔴 Não gerado no Financeiro", quantidade(_qtd_nao_gerado))
+                with col_v3:
+                    st.metric("🟡 Divergente", quantidade(_qtd_divergente))
+                with col_v4:
+                    st.metric("🔵 Aguardando baixa", quantidade(_qtd_aguardando))
+                with col_v5:
+                    st.metric("🟢 OK", quantidade(_qtd_ok))
+                st.caption(
+                    "Cada retenção (IR/PIS/COFINS/CSLL/ISS) é gerada pelo Protheus como "
+                    "um título \"irmão\" na própria SE2010 (mesmo número, tipo TX), "
+                    "com baixa própria - independente da baixa do título original. "
+                    "🔴 Não gerado = nenhum título de taxa encontrado ainda. "
+                    "🟡 Divergente = encontrado, mas o valor não bate com o retido. "
+                    "🔵 Aguardando baixa = gerado e o valor bate, só falta pagar - "
+                    "não é tratado como problema. 🟢 OK = gerado, valor batendo e já pago."
+                )
 
-        _debito = _df_s["VALOR_ICMS"].sum() if not _df_s.empty else 0.0
-        _credito = _df_e["VALOR_ICMS"].sum() if not _df_e.empty else 0.0
-        _saldo = _debito - _credito
+            with st.expander("📋 Ver títulos e status", expanded=False):
+                filtro_val_fin = st.segmented_control(
+                    "Status",
+                    options=[
+                        "⚠️ Com problema",
+                        "🔴 Não gerado",
+                        "🟡 Divergente",
+                        "🔵 Aguardando baixa",
+                        "🟢 OK",
+                        "Todos",
+                    ],
+                    default="⚠️ Com problema",
+                    selection_mode="single",
+                    key="filtro_validacao_financeiro",
+                )
+                if filtro_val_fin == "⚠️ Com problema":
+                    df_val_fin_filtrado = df_val_fin[
+                        df_val_fin["STATUS"].isin(
+                            [
+                                retencao_service._STATUS_NAO_GERADO,
+                                retencao_service._STATUS_DIVERGENTE,
+                            ]
+                        )
+                    ]
+                elif filtro_val_fin == "🔴 Não gerado":
+                    df_val_fin_filtrado = df_val_fin[
+                        df_val_fin["STATUS"] == retencao_service._STATUS_NAO_GERADO
+                    ]
+                elif filtro_val_fin == "🟡 Divergente":
+                    df_val_fin_filtrado = df_val_fin[
+                        df_val_fin["STATUS"] == retencao_service._STATUS_DIVERGENTE
+                    ]
+                elif filtro_val_fin == "🔵 Aguardando baixa":
+                    df_val_fin_filtrado = df_val_fin[
+                        df_val_fin["STATUS"] == retencao_service._STATUS_AGUARDANDO_BAIXA
+                    ]
+                elif filtro_val_fin == "🟢 OK":
+                    df_val_fin_filtrado = df_val_fin[
+                        df_val_fin["STATUS"] == retencao_service._STATUS_OK
+                    ]
+                else:
+                    df_val_fin_filtrado = df_val_fin
 
-        col_r1, col_r2, col_r3 = st.columns(3)
-        with col_r1:
-            st.metric("Débito do ICMS (saídas)", moeda(_debito))
-        with col_r2:
-            st.metric("Crédito do ICMS (entradas)", moeda(_credito))
-        with col_r3:
-            st.metric(
-                "Saldo do período",
-                moeda(_saldo),
-                delta="A recolher" if _saldo > 0 else "Credor",
-                delta_color="off",
-            )
+                rotulo_fornecedor_val_fin = df_val_fin_filtrado.apply(
+                    lambda r: f"{r['FORNECEDOR']} - {r['NOME_FORNECEDOR']}"
+                    if r["NOME_FORNECEDOR"]
+                    else r["FORNECEDOR"],
+                    axis=1,
+                )
+                df_exibir_val_fin = df_val_fin_filtrado.assign(
+                    FORNECEDOR_ROTULO=rotulo_fornecedor_val_fin
+                )[
+                    [
+                        "EMISSAO", "DOCUMENTO", "FORNECEDOR_ROTULO",
+                        "VALOR_TITULO", "VALOR_ISS", "VALOR_RETIDO", "VALOR_LIQUIDO_ESPERADO",
+                        "QTD_TITULOS_RETENCAO", "VALOR_GERADO_FINANCEIRO",
+                        "QTD_BAIXADOS", "DATA_ULTIMA_BAIXA", "DIFERENCA",
+                        "STATUS",
+                    ]
+                ]
+
+                st.dataframe(
+                    df_exibir_val_fin,
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "EMISSAO": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
+                        "DOCUMENTO": "Documento",
+                        "FORNECEDOR_ROTULO": "Fornecedor",
+                        "VALOR_TITULO": st.column_config.NumberColumn("Valor Título", format="R$ %.2f"),
+                        "VALOR_ISS": st.column_config.NumberColumn("ISS Retido", format="R$ %.2f"),
+                        "VALOR_RETIDO": st.column_config.NumberColumn("Total Retido", format="R$ %.2f"),
+                        "VALOR_LIQUIDO_ESPERADO": st.column_config.NumberColumn(
+                            "Líquido Esperado", format="R$ %.2f"
+                        ),
+                        "QTD_TITULOS_RETENCAO": "Qtd. Retenções Geradas",
+                        "VALOR_GERADO_FINANCEIRO": st.column_config.NumberColumn(
+                            "Valor Gerado no Financeiro", format="R$ %.2f"
+                        ),
+                        "QTD_BAIXADOS": "Qtd. Já Baixadas",
+                        "DATA_ULTIMA_BAIXA": st.column_config.DateColumn(
+                            "Última Baixa", format="DD/MM/YYYY"
+                        ),
+                        "DIFERENCA": st.column_config.NumberColumn("Diferença", format="R$ %.2f"),
+                        "STATUS": "Status",
+                    },
+                )
+
+                col_csv_vf, col_xlsx_vf, col_meta_vf = st.columns([1, 1, 2])
+                with col_csv_vf:
+                    st.download_button(
+                        "Baixar CSV",
+                        data=df_exibir_val_fin.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="retencoes_x_financeiro.csv",
+                        mime="text/csv",
+                    )
+                with col_xlsx_vf:
+                    _buf_vf = io.BytesIO()
+                    df_exibir_val_fin.to_excel(_buf_vf, index=False, engine="openpyxl")
+                    st.download_button(
+                        "Baixar Excel",
+                        data=_buf_vf.getvalue(),
+                        file_name="retencoes_x_financeiro.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                with col_meta_vf:
+                    st.caption(f"{len(df_exibir_val_fin)} de {len(df_val_fin)} título(s) exibido(s).")
