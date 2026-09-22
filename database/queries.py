@@ -759,7 +759,51 @@ def sql_cfop_entrada(filiais: list[str], fornecedor: str | None = None) -> tuple
 # essa classificação para não exibir um valor fiscal incorreto ao
 # contador - mesma decisão já tomada para "notas canceladas"
 # (STATUS_CANCELADO_ENTRADA/SAIDA).
+#
+# CORREÇÃO (22/09/2026 - rodadas 6 a 10 da investigação, ver
+# DOCUMENTACAO.md): os valores da primeira versão desta query não batiam
+# com o relatório nativo "Registro de Apuração de ICMS P9" do Protheus, por
+# dois motivos confirmados via SQL:
+#   1) Filtro de data errado - a query original filtrava por F1/F2_EMISSAO
+#      (data de emissão da NFe), mas a apuração nativa classifica pela data
+#      de LANÇAMENTO (F1/F2_DTDIGIT). Uma nota emitida num mês mas lançada
+#      no Protheus em outro (comum com importação SPED atrasada) entrava no
+#      P9 do mês de lançamento e sumia do dashboard, que olhava a emissão.
+#   2) NFe duplicada - a mesma nota fiscal eletrônica (mesma F1/F2_CHVNFE,
+#      chave de acesso) pode estar lançada mais de uma vez no Protheus sob
+#      documentos/séries internos diferentes (erro de lançamento/importação
+#      SPED, confirmado como duplicidade real, não processo normal). A
+#      query original somava cada lançamento, inflando o valor. A correção
+#      deduplica por chave de acesso via CTE (NF_DEDUP), mantendo só o
+#      lançamento mais antigo (por F1/F2_DTDIGIT) de cada chave. Notas sem
+#      chave de acesso (lançamento manual, F1/F2_CHVNFE em branco) NÃO são
+#      deduplicadas entre si - cada uma tem sua própria partição na janela,
+#      via CASE WHEN, para não juntar notas manuais distintas por engano.
+#
+# AJUSTE (22/09/2026, mesmo dia - rodada 12): em SF2010 (saída), F2_DTDIGIT
+# vem em BRANCO em notas recentes desta base (a nota de saída é emitida
+# pelo próprio Protheus, diferente da entrada que é lançada depois de
+# receber a NFe de terceiro) - filtrar só por F2_DTDIGIT zerava a aba
+# ICMS-Saídas inteira. As duas queries agora usam
+# ISNULL(NULLIF(RTRIM(F1/F2_DTDIGIT), ''), F1/F2_EMISSAO) - usa o
+# lançamento quando existir, cai para a emissão quando estiver em branco.
 SQL_APURACAO_ICMS_SAIDA = """
+WITH NF_DEDUP AS (
+    SELECT
+        F2_FILIAL, F2_DOC, F2_SERIE, F2_EMISSAO,
+        ISNULL(NULLIF(RTRIM(F2_DTDIGIT), ''), F2_EMISSAO) AS F2_DATA_APURACAO,
+        ROW_NUMBER() OVER (
+            PARTITION BY F2_FILIAL,
+                CASE WHEN RTRIM(ISNULL(F2_CHVNFE, '')) = '' THEN 'SEMCHAVE|' + F2_DOC + '|' + F2_SERIE
+                     ELSE F2_CHVNFE END
+            ORDER BY ISNULL(NULLIF(RTRIM(F2_DTDIGIT), ''), F2_EMISSAO) ASC, F2_DOC ASC, F2_SERIE ASC
+        ) AS RN
+    FROM {TABELA_NF_SAIDA}
+    WHERE D_E_L_E_T_ = ''
+      AND {FILIAL}
+      AND ISNULL(NULLIF(RTRIM(F2_DTDIGIT), ''), F2_EMISSAO) BETWEEN ? AND ?
+      {FILTRO_CLIENTE}
+)
 SELECT
     {CAMPO_CFOP}                                                    AS CFOP,
     COUNT(DISTINCT D2_FILIAL + '|' + D2_DOC + '|' + D2_SERIE)       AS QTD_NOTAS,
@@ -768,21 +812,33 @@ SELECT
     ISNULL(SUM(D2_BASEICM), 0)                                      AS BASE_ICMS,
     ISNULL(SUM(D2_VALICM), 0)                                       AS VALOR_ICMS
 FROM {TABELA_ITEM_SAIDA}
-INNER JOIN {TABELA_NF_SAIDA}
-    ON D2_FILIAL  = F2_FILIAL
-   AND D2_DOC     = F2_DOC
-   AND D2_SERIE   = F2_SERIE
-   AND D2_EMISSAO = F2_EMISSAO
+INNER JOIN NF_DEDUP
+    ON D2_FILIAL  = NF_DEDUP.F2_FILIAL
+   AND D2_DOC     = NF_DEDUP.F2_DOC
+   AND D2_SERIE   = NF_DEDUP.F2_SERIE
+   AND D2_EMISSAO = NF_DEDUP.F2_EMISSAO
 WHERE {TABELA_ITEM_SAIDA}.D_E_L_E_T_ = ''
-  AND {TABELA_NF_SAIDA}.D_E_L_E_T_ = ''
-  AND {FILIAL}
-  AND F2_EMISSAO BETWEEN ? AND ?
-  {FILTRO_CLIENTE}
+  AND NF_DEDUP.RN = 1
 GROUP BY {CAMPO_CFOP}
 ORDER BY VALOR_CONTABIL DESC
 """
 
 SQL_APURACAO_ICMS_ENTRADA = """
+WITH NF_DEDUP AS (
+    SELECT
+        F1_FILIAL, F1_DOC, F1_SERIE, F1_EMISSAO,
+        ROW_NUMBER() OVER (
+            PARTITION BY F1_FILIAL,
+                CASE WHEN RTRIM(ISNULL(F1_CHVNFE, '')) = '' THEN 'SEMCHAVE|' + F1_DOC + '|' + F1_SERIE
+                     ELSE F1_CHVNFE END
+            ORDER BY F1_DTDIGIT ASC, F1_DOC ASC, F1_SERIE ASC
+        ) AS RN
+    FROM {TABELA_NF_ENTRADA}
+    WHERE D_E_L_E_T_ = ''
+      AND {FILIAL}
+      AND F1_DTDIGIT BETWEEN ? AND ?
+      {FILTRO_FORNECEDOR}
+)
 SELECT
     {CAMPO_CFOP}                                                    AS CFOP,
     COUNT(DISTINCT D1_FILIAL + '|' + D1_DOC + '|' + D1_SERIE)       AS QTD_NOTAS,
@@ -791,16 +847,13 @@ SELECT
     ISNULL(SUM(D1_BASEICM), 0)                                      AS BASE_ICMS,
     ISNULL(SUM(D1_VALICM), 0)                                       AS VALOR_ICMS
 FROM {TABELA_ITEM_ENTRADA}
-INNER JOIN {TABELA_NF_ENTRADA}
-    ON D1_FILIAL  = F1_FILIAL
-   AND D1_DOC     = F1_DOC
-   AND D1_SERIE   = F1_SERIE
-   AND D1_EMISSAO = F1_EMISSAO
+INNER JOIN NF_DEDUP
+    ON D1_FILIAL  = NF_DEDUP.F1_FILIAL
+   AND D1_DOC     = NF_DEDUP.F1_DOC
+   AND D1_SERIE   = NF_DEDUP.F1_SERIE
+   AND D1_EMISSAO = NF_DEDUP.F1_EMISSAO
 WHERE {TABELA_ITEM_ENTRADA}.D_E_L_E_T_ = ''
-  AND {TABELA_NF_ENTRADA}.D_E_L_E_T_ = ''
-  AND {FILIAL}
-  AND F1_EMISSAO BETWEEN ? AND ?
-  {FILTRO_FORNECEDOR}
+  AND NF_DEDUP.RN = 1
 GROUP BY {CAMPO_CFOP}
 ORDER BY VALOR_CONTABIL DESC
 """
