@@ -119,28 +119,51 @@ _CSS = f"""
         border: none;
     }}
 
+    /* Cards de metric na mesma linha (st.columns) ficavam com alturas
+       diferentes quando um deles tem `delta=` (ex.: "Saldo do período" na
+       Apuração de ICMS) e os vizinhos não - o delta acrescenta conteúdo
+       extra, deixando só aquele card mais alto.
+       "height: 100%" sozinho no stMetric (tentativa original) não
+       resolvia: no DOM do Streamlit o card fica embrulhado em 1-2 divs
+       internos (stVerticalBlock/element-container) com altura automática
+       (baseada no conteúdo) - um "height: 100%" só funciona se todo
+       ancestral até ali tiver altura definida, e esses wrappers não têm.
+       Confirmado em produção em 23/09/2026 (print do usuário: os 2 cards
+       sem delta continuavam mais baixos que o com delta) mesmo com a regra
+       de altura já aplicada.
+       A correção: tornar esses wrappers "invisíveis" para o layout
+       (display: contents), fazendo o stMetric virar filho direto (para
+       fins de CSS) da própria coluna - só então o "flex: 1" abaixo consegue
+       esticar o card para ocupar 100% da altura que o st.columns já reserva
+       para a linha (a coluna estica para a altura da mais alta da linha -
+       comportamento padrão do flexbox). Vale para QUALQUER linha de
+       métricas do app, não só esta tela. */
+    div[data-testid="column"]:has(> div [data-testid="stMetric"]) {{
+        display: flex;
+        flex-direction: column;
+    }}
+    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div[data-testid="stVerticalBlock"],
+    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div[data-testid="stVerticalBlock"] > div[data-testid="element-container"],
+    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div[data-testid="element-container"] {{
+        display: contents;
+    }}
+
     [data-testid="stMetric"] {{
         background-color: #ffffff;
         border: 1px solid var(--biocaz-borda);
         border-radius: 10px;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
         padding: 14px 16px;
-        /* Cards de metric na mesma linha (st.columns) ficavam com alturas
-           diferentes quando um deles tem `delta=` (ex.: "Saldo do período"
-           na Apuração de ICMS) e os vizinhos não - o delta acrescenta
-           conteúdo extra, deixando só aquele card mais alto. Como o
-           st.columns já estica cada coluna para a altura da mais alta da
-           linha (flexbox), só faltava o card ocupar 100% dessa altura e
-           centralizar o conteúdo - isso alinha os cards em QUALQUER linha
-           de métricas do app, não só nesta tela.
-           Além disso, o delta (ex.: "↑ Credor") ficava numa linha própria
-           embaixo do valor, "sobrando" um espaço estranho ao lado dele
-           (pedido do usuário em 23/09/2026: colocar o delta do lado do
-           valor). label/valor/delta são 3 elementos-irmãos dentro do
-           mesmo card - com flex-wrap, forçando o label a ocupar 100% da
-           largura (regra abaixo), ele sozinho quebra para sua própria
-           linha, e valor+delta (que sobram) ficam lado a lado na linha
-           seguinte, sem precisar mudar a estrutura do st.metric.
+        /* Além da altura (ver comentário acima), o delta (ex.: "↑ Credor")
+           ficava numa linha própria embaixo do valor, "sobrando" um espaço
+           estranho ao lado dele (pedido do usuário em 23/09/2026: colocar
+           o delta do lado do valor). label/valor/delta são 3
+           elementos-irmãos dentro do mesmo card - com flex-wrap, forçando
+           o label a ocupar 100% da largura (regra abaixo), ele sozinho
+           quebra para sua própria linha, e valor+delta (que sobram) ficam
+           lado a lado na linha seguinte, sem precisar mudar a estrutura do
+           st.metric. */
+        flex: 1;
         height: 100%;
         display: flex;
         flex-direction: row;
@@ -166,6 +189,21 @@ _CSS = f"""
 
     [data-testid="stCaptionContainer"] {{
         color: var(--biocaz-cinza);
+    }}
+
+    /* Colunas dos botões "Baixar CSV"/"Baixar Excel" (st.columns([1, 1, 6])
+       - a última fatia larga é só para caber a legenda ao lado). A coluna
+       reservada para cada botão é bem mais larga que o próprio botão, que
+       fica alinhado à esquerda dela - sobrava um vão vazio entre os dois
+       botões (pedido do usuário em 23/09/2026 para deixar mais próximos).
+       Encolher a coluna do botão para o tamanho do próprio conteúdo (em
+       vez da fatia proporcional do st.columns) elimina esse vão; sobra só
+       o "gap" pequeno entre colunas.
+    */
+    div[data-testid="column"]:has([data-testid="stDownloadButton"]) {{
+        flex: 0 0 auto !important;
+        width: auto !important;
+        min-width: 0 !important;
     }}
 </style>
 """
