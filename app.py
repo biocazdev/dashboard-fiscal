@@ -176,7 +176,9 @@ _CSS = f"""
         flex: 1 0 100%;
     }}
     [data-testid="stMetricLabel"] p {{
-        color: var(--biocaz-azul);
+        /* Pedido do usuário em 23/09/2026: rótulo do card em preto (como
+           estava antes), valor em verde (ver stMetricValue abaixo). */
+        color: var(--biocaz-preto);
         font-weight: 600;
     }}
     [data-testid="stMetricValue"] {{
@@ -707,6 +709,29 @@ def _colunas_em_grade(qtd: int, max_por_linha: int = 3) -> list:
     return colunas
 
 
+def _colunas_botoes_download(fracao: int = 2, divisor: int = 12):
+    """Duas colunas coladas para o par "Baixar CSV"/"Baixar Excel", mais uma
+    terceira (o resto da linha) para uma legenda opcional ao lado.
+
+    Antes disso o código usava direto ``st.columns([1, 1, 6], gap="small")``:
+    cada botão ficava sozinho numa coluna larga (1/8 da linha) e, como o
+    botão não estica para ocupar a coluna inteira, sobrava um vão vazio
+    entre os dois (reclamado pelo usuário em 23/09/2026 mais de uma vez -
+    inclusive depois de uma tentativa de corrigir só via CSS, que não
+    pegou). A correção que realmente funciona é reduzir o quanto de largura
+    a DUPLA de botões recebe: reservamos só ``fracao`` de ``divisor`` partes
+    da linha para os dois juntos (bem menos que a largura de duas colunas
+    "soltas" como antes) e, dentro desse pedaço estreito, dividimos ao meio
+    - como agora o pedaço todo já é pouco maior que os dois botões somados,
+    o vão entre eles vira só o "gap" pequeno do meio, não sobra espaço
+    extra.
+    """
+    col_botoes, col_resto = st.columns([fracao, divisor - fracao], gap="small")
+    with col_botoes:
+        col_a, col_b = st.columns(2, gap="small")
+    return col_a, col_b, col_resto
+
+
 def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
     """Aba 'Conciliação Fiscal x Contábil'.
 
@@ -899,7 +924,7 @@ def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
                 },
             )
 
-            col_dl1, col_dl2, _ = st.columns([1, 1, 6], gap="small")
+            col_dl1, col_dl2, _ = _colunas_botoes_download()
             with col_dl1:
                 st.download_button(
                     "⬇️ CSV (filtro atual)",
@@ -1823,7 +1848,7 @@ with tab_fiscal:
                     },
                 )
 
-                col_csv, col_xlsx, col_meta = st.columns([1, 1, 6], gap="small")
+                col_csv, col_xlsx, col_meta = _colunas_botoes_download()
                 with col_csv:
                     st.download_button(
                         "Baixar CSV",
@@ -1952,7 +1977,7 @@ with tab_fiscal:
                 # Removido da tela em 23/09/2026 a pedido do usuário - mantido
                 # aqui só como documentação para quem mexer no código.
 
-                col_csv_cte, col_xlsx_cte, col_meta_cte = st.columns([1, 1, 6], gap="small")
+                col_csv_cte, col_xlsx_cte, col_meta_cte = _colunas_botoes_download()
                 with col_csv_cte:
                     st.download_button(
                         "Baixar CSV",
@@ -2030,7 +2055,7 @@ with tab_fiscal:
                 },
             )
 
-            col_csv, col_xlsx, col_meta = st.columns([1, 1, 6], gap="small")
+            col_csv, col_xlsx, col_meta = _colunas_botoes_download()
             with col_csv:
                 st.download_button(
                     "Baixar CSV",
@@ -2193,7 +2218,7 @@ with tab_retencoes_grupo:
                     },
                 )
 
-                col_csv_ret, col_xlsx_ret, col_meta_ret = st.columns([1, 1, 6], gap="small")
+                col_csv_ret, col_xlsx_ret, col_meta_ret = _colunas_botoes_download()
                 with col_csv_ret:
                     st.download_button(
                         "Baixar CSV",
@@ -2353,7 +2378,7 @@ with tab_retencoes_grupo:
                     },
                 )
 
-                col_csv_vf, col_xlsx_vf, col_meta_vf = st.columns([1, 1, 6], gap="small")
+                col_csv_vf, col_xlsx_vf, col_meta_vf = _colunas_botoes_download()
                 with col_csv_vf:
                     st.download_button(
                         "Baixar CSV",
