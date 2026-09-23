@@ -143,6 +143,18 @@ TOLERANCIA_CONCILIACAO: str = _get_secret_or_env("TOLERANCIA_CONCILIACAO", "0.05
 # separados por vírgula. Código sem rótulo mapeado continua aparecendo cru.
 # Ex.: CT2_ORIGEM_ROTULOS=SE1:Contas a Receber,SE2:Contas a Pagar,MATA460:Faturamento
 CT2_ORIGEM_ROTULOS: str = _get_secret_or_env("CT2_ORIGEM_ROTULOS")
+# Margem (em dias) somada ao fim do período pesquisado para filtrar
+# CT2_DATA no JOIN da Conciliação Fiscal x Contábil (pedido do usuário em
+# 24/09/2026, reclamando de lentidão - ver levantamento de 23/09/2026, item
+# K.1.1: o JOIN com CT2010 não filtrava CT2_DATA, então nunca aproveitava os
+# índices que já existem em CT2010 liderados por (CT2_FILIAL, CT2_DATA,
+# ...). Cobre o caso de lançamento contábil atrasado em relação à emissão
+# da nota (ex.: nota emitida no fim do mês, contabilizada só semanas
+# depois) - aumente se a empresa costumar levar mais tempo que isso para
+# contabilizar.
+CT2_JANELA_MARGEM_DIAS: int = int(
+    _get_secret_or_env("CT2_JANELA_MARGEM_DIAS", "120").strip() or "120"
+)
 
 # ---------------------------------------------------------------------------
 # CFOP (Grupo B - Apuração fiscal)
@@ -197,6 +209,15 @@ ALERTA_SALDO_ICMS_CREDITO: bool = _get_bool("ALERTA_SALDO_ICMS_CREDITO", True)
 # absoluto. Vazio (padrão) = desligado - defina um valor de referência da
 # empresa para ativar.
 ALERTA_SALDO_ICMS_MAX: str = _get_secret_or_env("ALERTA_SALDO_ICMS_MAX")
+
+# Quantos meses para trás olhar ao montar as listas de Fornecedor/Cliente da
+# sidebar (pedido do usuário em 24/09/2026, reclamando de lentidão ao abrir/
+# filtrar o dashboard - ver database/queries.py::SQL_FORNECEDORES para o
+# porquê). Um fornecedor/cliente sem nenhuma nota dentro dessa janela não
+# aparece no combo. Aumente se precisar enxergar parceiros mais antigos.
+PARCEIROS_MESES_HISTORICO: int = int(
+    _get_secret_or_env("PARCEIROS_MESES_HISTORICO", "24").strip() or "24"
+)
 
 # ---------------------------------------------------------------------------
 # Retenções (IR/PIS/COFINS/CSLL) - Contas a Pagar (SE2)

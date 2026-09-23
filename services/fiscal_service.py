@@ -479,28 +479,50 @@ def _buscar_parceiros(
     return parceiros
 
 
+def _data_minima_parceiros() -> str:
+    """Data mínima (YYYYMMDD) para as listas de Fornecedor/Cliente da sidebar.
+
+    ``settings.PARCEIROS_MESES_HISTORICO`` meses para trás, a partir de
+    hoje - ver comentário em ``config/settings.py`` e em
+    ``database/queries.py::SQL_FORNECEDORES`` para o porquê (performance).
+    """
+    hoje = date.today()
+    ano_ini, mes_ini = _mes_anterior(hoje.year, hoje.month, settings.PARCEIROS_MESES_HISTORICO)
+    return date(ano_ini, mes_ini, 1).strftime("%Y%m%d")
+
+
 def buscar_fornecedores(filial: str | list[str]) -> list[tuple[str, str]]:
-    """Retorna os fornecedores (código, nome) com notas na(s) filial(is)."""
+    """Retorna os fornecedores (código, nome) com notas de entrada recentes.
+
+    "Recentes" = dentro de ``settings.PARCEIROS_MESES_HISTORICO`` meses -
+    ver ``_data_minima_parceiros``.
+    """
     filiais = _normalizar_filiais(filial)
     if not filiais:
         return []
+    data_minima = _data_minima_parceiros()
     return _buscar_parceiros(
         filiais,
-        queries.sql_fornecedores,
-        queries.sql_fornecedores_fallback,
+        lambda fs: queries.sql_fornecedores(fs, data_minima),
+        lambda fs: queries.sql_fornecedores_fallback(fs, data_minima),
         "fornecedores",
     )
 
 
 def buscar_clientes(filial: str | list[str]) -> list[tuple[str, str]]:
-    """Retorna os clientes (código, nome) com notas na(s) filial(is)."""
+    """Retorna os clientes (código, nome) com notas de saída recentes.
+
+    "Recentes" = dentro de ``settings.PARCEIROS_MESES_HISTORICO`` meses -
+    ver ``_data_minima_parceiros``.
+    """
     filiais = _normalizar_filiais(filial)
     if not filiais:
         return []
+    data_minima = _data_minima_parceiros()
     return _buscar_parceiros(
         filiais,
-        queries.sql_clientes,
-        queries.sql_clientes_fallback,
+        lambda fs: queries.sql_clientes(fs, data_minima),
+        lambda fs: queries.sql_clientes_fallback(fs, data_minima),
         "clientes",
     )
 

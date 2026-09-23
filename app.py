@@ -7,6 +7,7 @@ Responsabilidades (seção 12 da especificação):
 """
 
 import io
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 import pandas as pd
@@ -1471,7 +1472,7 @@ if data_inicial > data_final:
 
 
 # ---------------------------------------------------------------------------
-# Consulta dos indicadores
+# Consulta dos indicadores (+ CFOP em paralelo)
 # ---------------------------------------------------------------------------
 # Esta é a consulta "principal": os indicadores agregados (faturamento,
 # tributos etc.) usados nos cards da aba Visão Geral. Fica fora de qualquer
@@ -1479,24 +1480,61 @@ if data_inicial > data_final:
 # O try/except cobre falha de conexão com o SQL Server (banco fora do ar,
 # credenciais erradas no .env etc.) e mostra uma mensagem amigável em vez
 # de deixar o traceback estourar na tela do usuário.
-try:
-    indicadores = _indicadores_cached(
-        _filiais_atual, data_inicial, data_final, fornecedor, cliente, tipo_nfe_param
+#
+# A consulta de CFOP (usada só mais abaixo, dentro do expander "CFOP") é
+# INDEPENDENTE desta - mesmos filtros de entrada, sem depender do resultado
+# dos indicadores. Antes rodava em série, cada uma pagando sua própria
+# latência de rede até o SQL Server (que fica remoto, não localhost) -
+# pedido do usuário em 24/09/2026 para melhorar a lentidão ao filtrar.
+# Disparando as duas ao mesmo tempo (ThreadPoolExecutor, mesmo padrão já
+# usado em fiscal_service.buscar_indicadores/buscar_evolucao_mensal para
+# IBS/CBS x PIS/COFINS), o tempo de espera passa a ser o da mais lenta das
+# duas, não a soma das duas. Erro do CFOP não é fatal (mostra aviso e seve
+# com DataFrame vazio); erro dos indicadores continua parando a página como
+# antes, já que o resto da tela depende deles.
+with ThreadPoolExecutor(max_workers=2) as _executor_vgeral:
+    _fut_indicadores = _executor_vgeral.submit(
+        _indicadores_cached,
+        _filiais_atual,
+        data_inicial,
+        data_final,
+        fornecedor,
+        cliente,
+        tipo_nfe_param,
     )
-except DatabaseConnectionError as _exc:
-    st.error("Não foi possível conectar ao banco de dados.")
-    st.caption(f"Causa: {_exc}")
-    st.info(
-        "No Streamlit Community Cloud, verifique se os "
-        "secrets (DB_SERVER, DB_DATABASE, DB_USER, DB_PASSWORD) "
-        "estão corretos e se o SQL Server aceita conexões externas "
-        "(porta aberta no firewall)."
+    _fut_cfop_geral = _executor_vgeral.submit(
+        _cfop_cached,
+        _filiais_atual,
+        data_inicial,
+        data_final,
+        fornecedor,
+        cliente,
+        tipo_nfe_param,
     )
-    st.stop()
-except Exception as _exc:
-    st.error("Não foi possível consultar os dados fiscais.")
-    st.caption(f"Causa: {_exc}")
-    st.stop()
+
+    try:
+        indicadores = _fut_indicadores.result()
+    except DatabaseConnectionError as _exc:
+        st.error("Não foi possível conectar ao banco de dados.")
+        st.caption(f"Causa: {_exc}")
+        st.info(
+            "No Streamlit Community Cloud, verifique se os "
+            "secrets (DB_SERVER, DB_DATABASE, DB_USER, DB_PASSWORD) "
+            "estão corretos e se o SQL Server aceita conexões externas "
+            "(porta aberta no firewall)."
+        )
+        st.stop()
+    except Exception as _exc:
+        st.error("Não foi possível consultar os dados fiscais.")
+        st.caption(f"Causa: {_exc}")
+        st.stop()
+
+    try:
+        df_cfop_geral = _fut_cfop_geral.result()
+        _erro_cfop_geral = False
+    except Exception:
+        df_cfop_geral = pd.DataFrame()
+        _erro_cfop_geral = True
 
 if not indicadores:
     st.info("Nenhum registro encontrado para os filtros selecionados.")
@@ -1655,13 +1693,12 @@ with tab_visao:
             st.metric("📘 COFINS Entrada", moeda(indicadores["COFINS_ENTRADA"]))
 
     with st.expander("📋 CFOP (natureza das operações)", expanded=False):
-        try:
-            df_cfop = _cfop_cached(
-                _filiais_atual, data_inicial, data_final, fornecedor, cliente, tipo_nfe_param
-            )
-        except Exception:
+        # Já buscado em paralelo com os indicadores, lá em cima (ver
+        # comentário perto de "_executor_vgeral") - não faz outra consulta
+        # aqui, só reaproveita o resultado.
+        df_cfop = df_cfop_geral
+        if _erro_cfop_geral:
             st.warning("Não foi possível consultar a quebra por CFOP.")
-            df_cfop = pd.DataFrame()
 
         if df_cfop.empty:
             st.info("Nenhum CFOP encontrado no período e filial(is) selecionados.")

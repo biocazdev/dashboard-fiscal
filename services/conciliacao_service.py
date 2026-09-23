@@ -20,7 +20,7 @@ após o GO LIVE (ver DOCUMENTACAO.md).
 """
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -208,8 +208,19 @@ def conciliar(
 
     data_ini = _data_sql(data_inicial)
     data_fim = _data_sql(data_final)
+    # Janela de CT2_DATA usada só para o JOIN com o contábil (não filtra o
+    # lado fiscal) - mesmo início do período, mas alargada no fim para
+    # cobrir lançamento contábil atrasado (ver comentário em
+    # database/conciliacao_queries.py::SQL_CONCILIACAO_SAIDA e settings
+    # CT2_JANELA_MARGEM_DIAS). Pedido do usuário em 24/09/2026 (lentidão).
+    ct2_data_ini = data_ini
+    ct2_data_fim = _data_sql(
+        data_final + timedelta(days=settings.CT2_JANELA_MARGEM_DIAS)
+    )
 
-    sql_saida, prefixo_saida = conciliacao_queries.sql_conciliacao_saida(filiais, cliente)
+    sql_saida, prefixo_saida = conciliacao_queries.sql_conciliacao_saida(
+        filiais, ct2_data_ini, ct2_data_fim, cliente
+    )
     params_saida = prefixo_saida + [data_ini, data_fim]
     if cliente:
         params_saida.append(cliente)
@@ -220,7 +231,7 @@ def conciliar(
     )
 
     sql_entrada, prefixo_entrada = conciliacao_queries.sql_conciliacao_entrada(
-        filiais, fornecedor
+        filiais, ct2_data_ini, ct2_data_fim, fornecedor
     )
     params_entrada = prefixo_entrada + [data_ini, data_fim]
     if fornecedor:

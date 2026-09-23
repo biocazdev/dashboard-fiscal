@@ -246,6 +246,15 @@ LEFT JOIN {TABELA_CT2} CT2
    -- LEFT JOIN em INNER JOIN de fato (linhas com CT2 nulo seriam
    -- descartadas pelo WHERE), voltando a esconder notas sem lançamento.
    AND CT2.D_E_L_E_T_ = ''
+   -- Filtro de CT2_DATA (pedido do usuário em 24/09/2026, ver
+   -- levantamento de 23/09/2026 item K.1.1): sem isso o SQL Server não
+   -- tinha como usar os índices de CT2010 liderados por
+   -- (CT2_FILIAL, CT2_DATA, ...) - precisava escanear todos os
+   -- lançamentos da filial (de qualquer época) para então aplicar o
+   -- vínculo de documento (que usa SUBSTRING/RTRIM, não indexável).
+   -- A janela é mais larga que o período da nota (CT2_JANELA_MARGEM_DIAS)
+   -- para não perder lançamento contábil feito com atraso.
+   AND CT2.CT2_DATA BETWEEN ? AND ?
    {FILTRO_PARCEIRO}
    {FILTRO_ORIGEM}
    {FILTRO_DC}
@@ -289,6 +298,8 @@ LEFT JOIN {TABELA_CT2} CT2
     ON RTRIM(CT2.CT2_FILIAL) = RTRIM(F1.F1_FILIAL)
    AND {VINCULO_DOC}
    AND CT2.D_E_L_E_T_ = ''
+   -- Ver comentário equivalente em SQL_CONCILIACAO_SAIDA.
+   AND CT2.CT2_DATA BETWEEN ? AND ?
    {FILTRO_PARCEIRO}
    {FILTRO_ORIGEM}
    {FILTRO_DC}
@@ -354,20 +365,30 @@ ORDER BY CT2.CT2_FILIAL, CT2.CT2_DOC
 
 
 def sql_conciliacao_saida(
-    filiais: list[str], cliente: str | None = None
+    filiais: list[str],
+    ct2_data_ini: str,
+    ct2_data_fim: str,
+    cliente: str | None = None,
 ) -> tuple[str, list[str]]:
     """SQL de conciliação das saídas + parâmetros (prefixo, na ordem do SQL).
 
+    ``ct2_data_ini``/``ct2_data_fim`` (formato YYYYMMDD) filtram CT2_DATA no
+    JOIN - normalmente a mesma janela do período pesquisado, alargada por
+    ``settings.CT2_JANELA_MARGEM_DIAS`` no fim (ver comentário em
+    SQL_CONCILIACAO_SAIDA); calculado por quem chamar
+    (``conciliacao_service``), não aqui.
+
     Quando ``cliente`` é informado, adiciona o filtro de SF2.
 
-    A ordem de ``vinculo_params + origem_params + dc_params + filiais_params``
+    A ordem de
+    ``vinculo_params + origem_params + dc_params + ct2_data_params + filiais_params``
     segue a ordem em que os "?" aparecem no texto do SQL (todos dentro do
     ON do LEFT JOIN, antes do WHERE): vínculo de documento (rotina, só
-    quando CT2_DOC_VIA_KEY está ligado) -> CT2_ORIGEM -> CT2_DC -> filiais
-    (IN). O parâmetro do filtro de cliente (quando ``cliente`` é passado)
-    NÃO entra aqui: como ele fica no WHERE, depois de F2_EMISSAO BETWEEN,
-    quem chamar esta função precisa adicioná-lo por conta própria ao final
-    da lista de parâmetros, junto com data_ini/data_fim.
+    quando CT2_DOC_VIA_KEY está ligado) -> CT2_ORIGEM -> CT2_DC -> CT2_DATA
+    -> filiais (IN). O parâmetro do filtro de cliente (quando ``cliente`` é
+    passado) NÃO entra aqui: como ele fica no WHERE, depois de F2_EMISSAO
+    BETWEEN, quem chamar esta função precisa adicioná-lo por conta própria
+    ao final da lista de parâmetros, junto com data_ini/data_fim.
     """
     vinculo, vinculo_params = _vinculo_doc_saida()
     origem, origem_params = _filtro_origem(settings.CT2_ORIGEM_SAIDA)
@@ -384,19 +405,26 @@ def sql_conciliacao_saida(
         FILIAL=filiais_sql,
         FILTRO_CLIENTE=filtro_cliente,
     )
-    return sql, vinculo_params + origem_params + dc_params + filiais_params
+    ct2_data_params = [ct2_data_ini, ct2_data_fim]
+    return (
+        sql,
+        vinculo_params + origem_params + dc_params + ct2_data_params + filiais_params,
+    )
 
 
 def sql_conciliacao_entrada(
-    filiais: list[str], fornecedor: str | None = None
+    filiais: list[str],
+    ct2_data_ini: str,
+    ct2_data_fim: str,
+    fornecedor: str | None = None,
 ) -> tuple[str, list[str]]:
     """SQL de conciliação das entradas + parâmetros (prefixo, na ordem do SQL).
 
     Quando ``fornecedor`` é informado, adiciona o filtro de SF1.
 
     Mesma ordem/regra de ``sql_conciliacao_saida``: os parâmetros retornados
-    (``vinculo_params + origem_params + dc_params + filiais_params``) cobrem
-    só os "?" do JOIN; quem chamar deve completar com
+    (``vinculo_params + origem_params + dc_params + ct2_data_params + filiais_params``)
+    cobrem só os "?" do JOIN; quem chamar deve completar com
     ``[data_ini, data_fim]`` e, se houver ``fornecedor``, o valor do filtro
     de fornecedor, nessa ordem, ao final.
     """
@@ -415,7 +443,11 @@ def sql_conciliacao_entrada(
         FILIAL=filiais_sql,
         FILTRO_FORNECEDOR=filtro_forn,
     )
-    return sql, vinculo_params + origem_params + dc_params + filiais_params
+    ct2_data_params = [ct2_data_ini, ct2_data_fim]
+    return (
+        sql,
+        vinculo_params + origem_params + dc_params + ct2_data_params + filiais_params,
+    )
 
 
 def sql_sem_origem_fiscal(filiais: list[str]) -> tuple[str, list[str], list[str]]:

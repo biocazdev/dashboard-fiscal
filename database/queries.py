@@ -560,6 +560,20 @@ def sql_detalhamento(
 # A descrição vem do cadastro (SA2/SA1). A filial do cadastro corresponde
 # aos 4 primeiros dígitos da filial da nota (ex.: '010101' -> '0101').
 # Se o cadastro não existir, o serviço faz fallback para apenas os códigos.
+#
+# Filtro de F1_EMISSAO/F2_EMISSAO >= DATA_MINIMA (pedido do usuário em
+# 24/09/2026, reclamando de lentidão ao abrir/filtrar o dashboard): antes
+# estas consultas varriam o histórico INTEIRO de notas só para montar a
+# lista de fornecedores/clientes da sidebar, sem filtro nenhum de período -
+# e no caso de SF1010 (entrada) nem dá pra usar um índice de filial+data
+# aqui (ver levantamento de 23/09/2026, item K.1.3: SF1010 não tem esse
+# índice) - ou seja, cada consulta dessas paga o custo de escanear a tabela
+# inteira daquela filial. Limitando a um período recente (padrão: últimos
+# 24 meses, configurável), o volume de linhas varridas cai bastante sem
+# tirar da lista nenhum parceiro que o usuário realmente usaria no
+# dia a dia. Um fornecedor/cliente mais antigo que isso simplesmente não
+# aparece no combo - aceito como troca consciente entre performance e uma
+# lista 100% completa desde o início dos tempos.
 SQL_FORNECEDORES = """
 SELECT DISTINCT
     SF1.F1_FORNECE AS CODIGO,
@@ -572,6 +586,7 @@ LEFT JOIN {TABELA_FORNECEDORES} A2
    AND A2.D_E_L_E_T_ = ''
 WHERE SF1.D_E_L_E_T_ = ''
   AND {FILIAL}
+  AND SF1.F1_EMISSAO >= ?
   AND RTRIM(SF1.F1_FORNECE) <> ''
 ORDER BY SF1.F1_FORNECE
 """
@@ -582,6 +597,7 @@ SELECT DISTINCT F1_FORNECE AS CODIGO,
 FROM {TABELA_NF_ENTRADA}
 WHERE D_E_L_E_T_ = ''
   AND {FILIAL}
+  AND F1_EMISSAO >= ?
   AND RTRIM(F1_FORNECE) <> ''
 ORDER BY F1_FORNECE
 """
@@ -598,6 +614,7 @@ LEFT JOIN {TABELA_CLIENTES} A1
    AND A1.D_E_L_E_T_ = ''
 WHERE SF2.D_E_L_E_T_ = ''
   AND {FILIAL}
+  AND SF2.F2_EMISSAO >= ?
   AND RTRIM(SF2.F2_CLIENTE) <> ''
 ORDER BY SF2.F2_CLIENTE
 """
@@ -608,51 +625,52 @@ SELECT DISTINCT F2_CLIENTE AS CODIGO,
 FROM {TABELA_NF_SAIDA}
 WHERE D_E_L_E_T_ = ''
   AND {FILIAL}
+  AND F2_EMISSAO >= ?
   AND RTRIM(F2_CLIENTE) <> ''
 ORDER BY F2_CLIENTE
 """
 
 
-def sql_fornecedores(filiais: list[str]) -> tuple[str, list[str]]:
-    """SQL dos fornecedores presentes nas notas de entrada das filiais + params."""
+def sql_fornecedores(filiais: list[str], data_minima: str) -> tuple[str, list[str]]:
+    """SQL dos fornecedores com notas de entrada desde ``data_minima`` (YYYYMMDD)."""
     filiais_sql, params = _in_clause("SF1.F1_FILIAL", filiais)
     sql = SQL_FORNECEDORES.format(
         TABELA_NF_ENTRADA=_tabela(settings.TABELA_NF_ENTRADA),
         TABELA_FORNECEDORES=_tabela(settings.TABELA_FORNECEDORES),
         FILIAL=filiais_sql,
     )
-    return sql, params
+    return sql, params + [data_minima]
 
 
-def sql_fornecedores_fallback(filiais: list[str]) -> tuple[str, list[str]]:
+def sql_fornecedores_fallback(filiais: list[str], data_minima: str) -> tuple[str, list[str]]:
     """SQL alternativo de fornecedores (apenas códigos) sem o cadastro SA2."""
     filiais_sql, params = _in_clause("F1_FILIAL", filiais)
     sql = SQL_FORNECEDORES_FALLBACK.format(
         TABELA_NF_ENTRADA=_tabela(settings.TABELA_NF_ENTRADA),
         FILIAL=filiais_sql,
     )
-    return sql, params
+    return sql, params + [data_minima]
 
 
-def sql_clientes(filiais: list[str]) -> tuple[str, list[str]]:
-    """SQL dos clientes presentes nas notas de saída das filiais + params."""
+def sql_clientes(filiais: list[str], data_minima: str) -> tuple[str, list[str]]:
+    """SQL dos clientes com notas de saída desde ``data_minima`` (YYYYMMDD)."""
     filiais_sql, params = _in_clause("SF2.F2_FILIAL", filiais)
     sql = SQL_CLIENTES.format(
         TABELA_NF_SAIDA=_tabela(settings.TABELA_NF_SAIDA),
         TABELA_CLIENTES=_tabela(settings.TABELA_CLIENTES),
         FILIAL=filiais_sql,
     )
-    return sql, params
+    return sql, params + [data_minima]
 
 
-def sql_clientes_fallback(filiais: list[str]) -> tuple[str, list[str]]:
+def sql_clientes_fallback(filiais: list[str], data_minima: str) -> tuple[str, list[str]]:
     """SQL alternativo de clientes (apenas códigos) sem o cadastro SA1."""
     filiais_sql, params = _in_clause("F2_FILIAL", filiais)
     sql = SQL_CLIENTES_FALLBACK.format(
         TABELA_NF_SAIDA=_tabela(settings.TABELA_NF_SAIDA),
         FILIAL=filiais_sql,
     )
-    return sql, params
+    return sql, params + [data_minima]
 
 
 # ---------------------------------------------------------------------------
