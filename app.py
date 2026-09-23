@@ -176,13 +176,14 @@ _CSS = f"""
         flex: 1 0 100%;
     }}
     [data-testid="stMetricLabel"] p {{
-        /* Pedido do usuário em 23/09/2026: rótulo do card em preto (como
-           estava antes), valor em verde (ver stMetricValue abaixo). */
+        /* Pedido do usuário em 23/09/2026: rótulo do card em preto. */
         color: var(--biocaz-preto);
         font-weight: 600;
     }}
     [data-testid="stMetricValue"] {{
-        color: var(--biocaz-verde);
+        /* Valor também em preto - pedido do usuário em 23/09/2026 (era
+           verde antes). */
+        color: var(--biocaz-preto);
         flex: 0 0 auto;
     }}
     [data-testid="stMetricDelta"] {{
