@@ -127,17 +127,30 @@ _CSS = f"""
         padding: 14px 16px;
         /* Cards de metric na mesma linha (st.columns) ficavam com alturas
            diferentes quando um deles tem `delta=` (ex.: "Saldo do período"
-           na Apuração de ICMS) e os vizinhos não - o delta acrescenta uma
-           linha extra de texto, deixando só aquele card mais alto. Como o
+           na Apuração de ICMS) e os vizinhos não - o delta acrescenta
+           conteúdo extra, deixando só aquele card mais alto. Como o
            st.columns já estica cada coluna para a altura da mais alta da
            linha (flexbox), só faltava o card ocupar 100% dessa altura e
-           centralizar o conteúdo, em vez de manter o tamanho do seu
-           próprio conteúdo - isso alinha os cards em QUALQUER linha de
-           métricas do app, não só nesta tela.
+           centralizar o conteúdo - isso alinha os cards em QUALQUER linha
+           de métricas do app, não só nesta tela.
+           Além disso, o delta (ex.: "↑ Credor") ficava numa linha própria
+           embaixo do valor, "sobrando" um espaço estranho ao lado dele
+           (pedido do usuário em 23/09/2026: colocar o delta do lado do
+           valor). label/valor/delta são 3 elementos-irmãos dentro do
+           mesmo card - com flex-wrap, forçando o label a ocupar 100% da
+           largura (regra abaixo), ele sozinho quebra para sua própria
+           linha, e valor+delta (que sobram) ficam lado a lado na linha
+           seguinte, sem precisar mudar a estrutura do st.metric.
         height: 100%;
         display: flex;
-        flex-direction: column;
-        justify-content: center;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-content: center;
+        align-items: baseline;
+        gap: 2px 10px;
+    }}
+    [data-testid="stMetricLabel"] {{
+        flex: 1 0 100%;
     }}
     [data-testid="stMetricLabel"] p {{
         color: var(--biocaz-azul);
@@ -145,6 +158,10 @@ _CSS = f"""
     }}
     [data-testid="stMetricValue"] {{
         color: var(--biocaz-verde);
+        flex: 0 0 auto;
+    }}
+    [data-testid="stMetricDelta"] {{
+        flex: 0 0 auto;
     }}
 
     [data-testid="stCaptionContainer"] {{
