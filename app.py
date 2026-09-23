@@ -138,13 +138,22 @@ _CSS = f"""
        para a linha (a coluna estica para a altura da mais alta da linha -
        comportamento padrão do flexbox). Vale para QUALQUER linha de
        métricas do app, não só esta tela. */
+    /* 24/09/2026: a tentativa anterior (acima) mirava nomes exatos de
+       testid para os wrappers (stVerticalBlock/element-container), mas o
+       problema continuou em produção (print do usuário: cards sem delta
+       ainda mais baixos) - o nome real do wrapper nesta versão do
+       Streamlit deve ser outro (ex.: "stElementContainer", não
+       "element-container"). Troca por uma regra que não depende do nome
+       exato: qualquer <div> filho que NÃO seja o próprio stMetric vira
+       "invisível" pro layout (display: contents), não importa como o
+       Streamlit chamar esse wrapper por dentro - cobre até 2 níveis de
+       aninhamento, que é o que o Streamlit usa hoje. */
     div[data-testid="column"]:has(> div [data-testid="stMetric"]) {{
         display: flex;
         flex-direction: column;
     }}
-    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div[data-testid="stVerticalBlock"],
-    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div[data-testid="stVerticalBlock"] > div[data-testid="element-container"],
-    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div[data-testid="element-container"] {{
+    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div:not([data-testid="stMetric"]),
+    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div:not([data-testid="stMetric"]) > div:not([data-testid="stMetric"]) {{
         display: contents;
     }}
 
