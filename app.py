@@ -454,10 +454,15 @@ def _evolucao_mensal_conciliacao_cached(
 def _grafico_por_periodo(por_periodo: pd.DataFrame) -> go.Figure:
     """Gráfico de barras empilhadas: conciliação por dia de emissão."""
     fig = go.Figure()
+    # Cores 100% da paleta institucional Biocaz (mesmas constantes do CSS
+    # global, no topo do arquivo): verde para o status "bom", azul para o
+    # status de atenção e preto para o status neutro/pendente. Antes este
+    # gráfico usava laranja/coral (#F4A261/#E76F51), que não fazem parte da
+    # identidade visual da marca - trocado a pedido do usuário em 23/09/2026.
     config_serie = [
-        (StatusConciliacao.CONCILIADO, "#43AA8A"),
-        (StatusConciliacao.DIVERGENTE, "#F4A261"),
-        (StatusConciliacao.NAO_CONTABILIZADO, "#E76F51"),
+        (StatusConciliacao.CONCILIADO, _BIOCAZ_VERDE),
+        (StatusConciliacao.DIVERGENTE, _BIOCAZ_AZUL),
+        (StatusConciliacao.NAO_CONTABILIZADO, _BIOCAZ_PRETO),
     ]
     rotulos = {
         StatusConciliacao.CONCILIADO: "Conciliado",
