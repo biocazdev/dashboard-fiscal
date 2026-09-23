@@ -125,6 +125,19 @@ _CSS = f"""
         border-radius: 10px;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
         padding: 14px 16px;
+        /* Cards de metric na mesma linha (st.columns) ficavam com alturas
+           diferentes quando um deles tem `delta=` (ex.: "Saldo do período"
+           na Apuração de ICMS) e os vizinhos não - o delta acrescenta uma
+           linha extra de texto, deixando só aquele card mais alto. Como o
+           st.columns já estica cada coluna para a altura da mais alta da
+           linha (flexbox), só faltava o card ocupar 100% dessa altura e
+           centralizar o conteúdo, em vez de manter o tamanho do seu
+           próprio conteúdo - isso alinha os cards em QUALQUER linha de
+           métricas do app, não só nesta tela.
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
     }}
     [data-testid="stMetricLabel"] p {{
         color: var(--biocaz-azul);
