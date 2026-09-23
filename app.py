@@ -122,38 +122,36 @@ _CSS = f"""
     /* Cards de metric na mesma linha (st.columns) ficavam com alturas
        diferentes quando um deles tem `delta=` (ex.: "Saldo do período" na
        Apuração de ICMS) e os vizinhos não - o delta acrescenta conteúdo
-       extra, deixando só aquele card mais alto.
-       "height: 100%" sozinho no stMetric (tentativa original) não
-       resolvia: no DOM do Streamlit o card fica embrulhado em 1-2 divs
-       internos (stVerticalBlock/element-container) com altura automática
-       (baseada no conteúdo) - um "height: 100%" só funciona se todo
-       ancestral até ali tiver altura definida, e esses wrappers não têm.
-       Confirmado em produção em 23/09/2026 (print do usuário: os 2 cards
-       sem delta continuavam mais baixos que o com delta) mesmo com a regra
-       de altura já aplicada.
-       A correção: tornar esses wrappers "invisíveis" para o layout
+       extra, deixando só aquele card mais alto. "height: 100%" sozinho no
+       stMetric não resolve: o card fica embrulhado em 2 divs internos do
+       Streamlit (stVerticalBlock > stElementContainer) com altura
+       automática (baseada no conteúdo) - percentual de altura só funciona
+       se todo ancestral até ali tiver altura definida.
+       Duas tentativas anteriores (23/09 e 24/09/2026) usaram o seletor
+       errado para a COLUNA em si: "div[data-testid='column']", que não
+       existe nesta versão do Streamlit - o testid real é "stColumn"
+       (confirmado rodando o app localmente com Playwright e inspecionando
+       o DOM de verdade, em vez de adivinhar de novo às cegas depois do 2º
+       print do usuário mostrando que ainda não tinha funcionado). Por isso
+       nenhuma das duas primeiras tentativas fazia efeito nenhum - a regra
+       toda era um "no-op" silencioso.
+       A correção: tornar os wrappers internos "invisíveis" para o layout
        (display: contents), fazendo o stMetric virar filho direto (para
-       fins de CSS) da própria coluna - só então o "flex: 1" abaixo consegue
-       esticar o card para ocupar 100% da altura que o st.columns já reserva
-       para a linha (a coluna estica para a altura da mais alta da linha -
-       comportamento padrão do flexbox). Vale para QUALQUER linha de
-       métricas do app, não só esta tela. */
-    /* 24/09/2026: a tentativa anterior (acima) mirava nomes exatos de
-       testid para os wrappers (stVerticalBlock/element-container), mas o
-       problema continuou em produção (print do usuário: cards sem delta
-       ainda mais baixos) - o nome real do wrapper nesta versão do
-       Streamlit deve ser outro (ex.: "stElementContainer", não
-       "element-container"). Troca por uma regra que não depende do nome
-       exato: qualquer <div> filho que NÃO seja o próprio stMetric vira
-       "invisível" pro layout (display: contents), não importa como o
-       Streamlit chamar esse wrapper por dentro - cobre até 2 níveis de
-       aninhamento, que é o que o Streamlit usa hoje. */
-    div[data-testid="column"]:has(> div [data-testid="stMetric"]) {{
+       fins de CSS) da própria stColumn - só então o "flex: 1" abaixo
+       consegue esticar o card para ocupar 100% da altura que o st.columns
+       já reserva para a linha (a coluna estica para a altura da mais alta
+       da linha - comportamento padrão do flexbox). A regra usa
+       ":not([data-testid='stMetric'])" em vez do nome exato dos wrappers
+       para não depender de novo de um nome específico que pode mudar em
+       versões futuras do Streamlit. Vale para QUALQUER linha de métricas
+       do app, não só esta tela. Testado e confirmado (alturas iguais) com
+       Playwright antes de publicar desta vez. */
+    div[data-testid="stColumn"]:has(> div [data-testid="stMetric"]) {{
         display: flex;
         flex-direction: column;
     }}
-    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div:not([data-testid="stMetric"]),
-    div[data-testid="column"]:has(> div [data-testid="stMetric"]) > div:not([data-testid="stMetric"]) > div:not([data-testid="stMetric"]) {{
+    div[data-testid="stColumn"]:has(> div [data-testid="stMetric"]) > div:not([data-testid="stMetric"]),
+    div[data-testid="stColumn"]:has(> div [data-testid="stMetric"]) > div:not([data-testid="stMetric"]) > div:not([data-testid="stMetric"]) {{
         display: contents;
     }}
 
@@ -212,7 +210,7 @@ _CSS = f"""
        vez da fatia proporcional do st.columns) elimina esse vão; sobra só
        o "gap" pequeno entre colunas.
     */
-    div[data-testid="column"]:has([data-testid="stDownloadButton"]) {{
+    div[data-testid="stColumn"]:has([data-testid="stDownloadButton"]) {{
         flex: 0 0 auto !important;
         width: auto !important;
         min-width: 0 !important;
