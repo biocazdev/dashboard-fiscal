@@ -807,7 +807,7 @@ def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
                 },
             )
 
-            col_dl1, col_dl2, _ = st.columns([1, 1, 2])
+            col_dl1, col_dl2, _ = st.columns([1, 1, 6], gap="small")
             with col_dl1:
                 st.download_button(
                     "⬇️ CSV (filtro atual)",
@@ -1711,7 +1711,7 @@ with tab_fiscal:
                     },
                 )
 
-                col_csv, col_xlsx, col_meta = st.columns([1, 1, 2])
+                col_csv, col_xlsx, col_meta = st.columns([1, 1, 6], gap="small")
                 with col_csv:
                     st.download_button(
                         "Baixar CSV",
@@ -1837,7 +1837,7 @@ with tab_fiscal:
                     "services/cte_service.py."
                 )
 
-                col_csv_cte, col_xlsx_cte, col_meta_cte = st.columns([1, 1, 2])
+                col_csv_cte, col_xlsx_cte, col_meta_cte = st.columns([1, 1, 6], gap="small")
                 with col_csv_cte:
                     st.download_button(
                         "Baixar CSV",
@@ -1912,7 +1912,7 @@ with tab_fiscal:
                 },
             )
 
-            col_csv, col_xlsx, col_meta = st.columns([1, 1, 2])
+            col_csv, col_xlsx, col_meta = st.columns([1, 1, 6], gap="small")
             with col_csv:
                 st.download_button(
                     "Baixar CSV",
@@ -2075,7 +2075,7 @@ with tab_retencoes_grupo:
                     },
                 )
 
-                col_csv_ret, col_xlsx_ret, col_meta_ret = st.columns([1, 1, 2])
+                col_csv_ret, col_xlsx_ret, col_meta_ret = st.columns([1, 1, 6], gap="small")
                 with col_csv_ret:
                     st.download_button(
                         "Baixar CSV",
@@ -2235,7 +2235,7 @@ with tab_retencoes_grupo:
                     },
                 )
 
-                col_csv_vf, col_xlsx_vf, col_meta_vf = st.columns([1, 1, 2])
+                col_csv_vf, col_xlsx_vf, col_meta_vf = st.columns([1, 1, 6], gap="small")
                 with col_csv_vf:
                     st.download_button(
                         "Baixar CSV",
