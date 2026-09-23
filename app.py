@@ -1825,16 +1825,18 @@ with tab_fiscal:
     # assim, a pedido explícito do cliente, para já funcionar automaticamente
     # assim que o módulo passar a ser alimentado, sem precisar mexer no
     # dashboard de novo.
+    # Fonte: registro genérico de documento fiscal do gerador de SPED Fiscal
+    # (tabela C20), filtrado pelo tipo de CT-e - esta instalação não usa o
+    # módulo de Transporte (TMS) do Protheus. Campos ainda não confirmados
+    # contra um CT-e real (a tabela está vazia nesta base) - conferir assim
+    # que o primeiro CT-e for lançado.
+    #
+    # Removido da tela em 23/09/2026 a pedido do usuário (texto explicativo
+    # técnico não precisa aparecer para quem usa o dashboard) - mantido
+    # aqui só como documentação para quem mexer no código.
     with tab_cte:
         st.session_state["aba_ativa"] = "cte"
         st.subheader("CT-e (Conhecimento de Transporte Eletrônico)")
-        st.caption(
-            "Fonte: registro genérico de documento fiscal do gerador de SPED "
-            "Fiscal (tabela C20), filtrado pelo tipo de CT-e - esta instalação "
-            "não usa o módulo de Transporte (TMS) do Protheus. Campos ainda "
-            "não confirmados contra um CT-e real (a tabela está vazia nesta "
-            "base) - conferir assim que o primeiro CT-e for lançado."
-        )
 
         try:
             df_cte = _ctes_cached(_filiais_atual, data_inicial, data_final, fornecedor)
@@ -1902,14 +1904,15 @@ with tab_fiscal:
                         ),
                     },
                 )
-                st.caption(
-                    "Coluna \"Chave NF-e Vinculada\" ainda não confirmada - é a "
-                    "aposta para o vínculo com a nota fiscal transportada "
-                    "(campo C20_CHVREF), mas pode também apontar para outro "
-                    "CT-e em casos de redespacho. Impostos do frete (ICMS) "
-                    "ainda não localizados em nenhuma tabela desta base - ver "
-                    "services/cte_service.py."
-                )
+                # Coluna "Chave NF-e Vinculada" ainda não confirmada - é a
+                # aposta para o vínculo com a nota fiscal transportada (campo
+                # C20_CHVREF), mas pode também apontar para outro CT-e em
+                # casos de redespacho. Impostos do frete (ICMS) ainda não
+                # localizados em nenhuma tabela desta base - ver
+                # services/cte_service.py.
+                #
+                # Removido da tela em 23/09/2026 a pedido do usuário - mantido
+                # aqui só como documentação para quem mexer no código.
 
                 col_csv_cte, col_xlsx_cte, col_meta_cte = st.columns([1, 1, 6], gap="small")
                 with col_csv_cte:
@@ -1938,17 +1941,20 @@ with tab_fiscal:
     # Contábil, Base de Cálculo, Imposto Debitado/Creditado) - ver
     # services/apuracao_icms_service.py para o que ficou pendente (Isentas,
     # Outras, ICMS-ST) e por quê.
+    #
+    # Quebra por CFOP com Valor Contábil (D1/D2_TOTAL), Base de Cálculo
+    # (D1/D2_BASEICM) e Imposto Creditado/Debitado (D1/D2_VALICM) - campos
+    # confirmados via SQL contra o banco real. As colunas "Isentas" e
+    # "Outras" da tela nativa do Protheus e as sub-abas de ICMS-ST ainda não
+    # têm fonte confirmada nesta instalação - ver
+    # services/apuracao_icms_service.py para o detalhe da investigação.
+    #
+    # Removido da tela em 23/09/2026 a pedido do usuário (esse texto
+    # explicativo não precisa aparecer para quem usa o dashboard) - mantido
+    # aqui só como documentação para quem mexer no código.
     with tab_apuracao_icms:
         st.session_state["aba_ativa"] = "apuracao_icms"
         st.subheader("Apuração de ICMS")
-        st.caption(
-            "Quebra por CFOP com Valor Contábil (D1/D2_TOTAL), Base de Cálculo "
-            "(D1/D2_BASEICM) e Imposto Creditado/Debitado (D1/D2_VALICM) - "
-            "campos confirmados via SQL contra o banco real. As colunas "
-            "\"Isentas\" e \"Outras\" da tela nativa do Protheus e as sub-abas "
-            "de ICMS-ST ainda não têm fonte confirmada nesta instalação - ver "
-            "services/apuracao_icms_service.py para o detalhe da investigação."
-        )
 
         tab_icms_entradas, tab_icms_saidas, tab_apuracao_resumo = st.tabs(
             ["ICMS-Entradas", "ICMS-Saídas", "Apuração-ICMS"]
@@ -2028,14 +2034,14 @@ with tab_fiscal:
                 df_icms_saida = pd.DataFrame()
             _exibir_apuracao_icms(df_icms_saida, "saida", "Imposto Debitado")
 
+        # Resumo do período (débito das saídas menos crédito das entradas).
+        # Não inclui saldo credor/devedor de meses anteriores - não foi
+        # encontrada nesta instalação uma tabela de apuração consolidada com
+        # esse saldo (a SF4010 é o cadastro de TES, não uma apuração pronta).
+        #
+        # Removido da tela em 23/09/2026 a pedido do usuário - mantido aqui
+        # só como documentação para quem mexer no código.
         with tab_apuracao_resumo:
-            st.caption(
-                "Resumo do período (débito das saídas menos crédito das "
-                "entradas). Não inclui saldo credor/devedor de meses "
-                "anteriores - não foi encontrada nesta instalação uma tabela "
-                "de apuração consolidada com esse saldo (a SF4010 é o "
-                "cadastro de TES, não uma apuração pronta)."
-            )
             try:
                 _df_e = _apuracao_icms_entrada_cached(
                     _filiais_atual, data_inicial, data_final, fornecedor
