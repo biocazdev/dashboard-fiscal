@@ -1392,13 +1392,28 @@ OUTER APPLY (
     FROM (
         -- Padrão A: título "irmão" com o MESMO FILIAL+PREFIXO+NÚMERO do
         -- título original, E2_TIPO='TX' e o tributo em E2_NATUREZ.
+        --
+        -- PERFORMANCE (23/09/2026 - levantamento da seção K do doc de
+        -- melhorias do projeto): TX2.E2_FILIAL/E2_PREFIXO/E2_NUM NÃO são
+        -- envolvidos em RTRIM() aqui, ao contrário de antes - confirmado
+        -- via sys.indexes que a {TABELA_CP} tem um índice
+        -- (E2_FILIAL, E2_PREFIXO, E2_NUM, E2_PARCELA, E2_TIPO, ...) pronto
+        -- para esta busca, mas RTRIM() em cima da coluna indexada impedia
+        -- o SQL Server de usar esse índice (forçava um scan da tabela
+        -- inteira a cada título do período, já que este OUTER APPLY roda
+        -- uma vez por título). Como E2_FILIAL/E2_PREFIXO/E2_NUM são campos
+        -- CHAR de tamanho fixo do Protheus, o SQL Server já ignora espaço
+        -- à direita na comparação "=" (regra ANSI de padding) - remover o
+        -- RTRIM() do lado de TX2 não muda o resultado, só permite o index
+        -- seek. O RTRIM() do lado de SE2 (valor correlacionado, não é a
+        -- coluna sendo buscada) foi mantido - não afeta o uso do índice.
         SELECT TX2.E2_VALOR, TX2.E2_BAIXA
         FROM {TABELA_CP} TX2
         WHERE TX2.D_E_L_E_T_ = ''
           AND TX2.E2_TIPO = 'TX'
-          AND RTRIM(TX2.E2_FILIAL) = RTRIM(SE2.E2_FILIAL)
-          AND RTRIM(TX2.E2_PREFIXO) = RTRIM(SE2.E2_PREFIXO)
-          AND RTRIM(TX2.E2_NUM) = RTRIM(SE2.E2_NUM)
+          AND TX2.E2_FILIAL = RTRIM(SE2.E2_FILIAL)
+          AND TX2.E2_PREFIXO = RTRIM(SE2.E2_PREFIXO)
+          AND TX2.E2_NUM = RTRIM(SE2.E2_NUM)
           AND RTRIM(TX2.E2_NATUREZ) IN ('IRF', 'PIS', 'COF', 'CSL', 'ISS')
 
         UNION ALL

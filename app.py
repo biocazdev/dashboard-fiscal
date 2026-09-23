@@ -615,6 +615,30 @@ def _detalhe_documento(linha: pd.Series):
             st.caption(f"Última edição: {_nota_atual['autor']} em {_nota_atual['atualizado_em']}")
 
 
+def _colunas_em_grade(qtd: int, max_por_linha: int = 3) -> list:
+    """Quebra ``qtd`` posições em uma ou mais linhas de ``st.columns``.
+
+    Usado nos blocos de cards (``st.metric``) que tinham 5 ou mais colunas
+    numa única linha - em telas menores (notebook, não ultrawide) cada
+    coluna ficava estreita demais e o valor (ex.: "R$ 73.193,78") era
+    cortado/quebrado de forma feia. Limitando a ``max_por_linha`` colunas
+    por linha (o resto sobe para a(s) linha(s) seguinte(s)), cada card
+    sempre tem largura suficiente para o valor aparecer inteiro, em
+    qualquer resolução.
+
+    Retorna a lista achatada de colunas, na mesma ordem - o código que
+    chama continua fazendo ``col1, col2, ... = _colunas_em_grade(N)`` e
+    ``with colX:`` exatamente como fazia com ``st.columns(N)``.
+    """
+    colunas: list = []
+    restante = qtd
+    while restante > 0:
+        n = min(max_por_linha, restante)
+        colunas.extend(st.columns(n))
+        restante -= n
+    return colunas
+
+
 def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
     """Aba 'Conciliação Fiscal x Contábil'.
 
@@ -667,7 +691,7 @@ def _render_conciliacao(filiais, data_inicial, data_final, fornecedor, cliente):
         with col4:
             st.metric("🔍 Sem origem fiscal", len(df_sem_origem))
 
-        col5, col6, col7, col8, col9 = st.columns(5)
+        col5, col6, col7, col8, col9 = _colunas_em_grade(5)
         with col5:
             st.metric("Valor Fiscal", moeda(resumo["valor_fiscal"]))
         with col6:
@@ -1468,7 +1492,7 @@ with tab_visao:
             f"🔵 Saída: **{_qtd_s}** ({_pct_s:.0f}%)"
         )
 
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4, col5 = _colunas_em_grade(5)
         with col1:
             st.metric("💰 Faturamento", moeda(indicadores["VALOR_NF_SAIDA"]))
         with col2:
@@ -1630,7 +1654,7 @@ with tab_visao:
             )
 
             _idx_ultimo = len(_df_evo) - 1
-            _cols_delta = st.columns(len(_metricas_sel))
+            _cols_delta = _colunas_em_grade(len(_metricas_sel))
             for _col, _rotulo in zip(_cols_delta, _metricas_sel):
                 with _col:
                     _coluna = _metricas_opcoes[_rotulo]
@@ -2023,7 +2047,7 @@ with tab_retencoes_grupo:
             )
         else:
             with st.expander("📊 Resumo", expanded=True):
-                col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+                col_r1, col_r2, col_r3, col_r4, col_r5 = _colunas_em_grade(5)
                 with col_r1:
                     st.metric("💼 Títulos", quantidade(len(df_retencoes)))
                 with col_r2:
@@ -2126,7 +2150,7 @@ with tab_retencoes_grupo:
             _qtd_nao_gerado = int((df_val_fin["STATUS"] == retencao_service._STATUS_NAO_GERADO).sum())
 
             with st.expander("📊 Resumo", expanded=True):
-                col_v1, col_v2, col_v3, col_v4, col_v5 = st.columns(5)
+                col_v1, col_v2, col_v3, col_v4, col_v5 = _colunas_em_grade(5)
                 with col_v1:
                     st.metric("💼 Títulos com retenção", quantidade(len(df_val_fin)))
                 with col_v2:
