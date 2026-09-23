@@ -1339,7 +1339,12 @@ with st.sidebar:
             type="primary",
         )
 
-    st.divider()
+    # Removido o st.divider() que ficava aqui (23/09/2026): ele criava um
+    # espaço vazio grande entre "Gerar relatório em PDF" e "Limpar filtros"
+    # na sidebar - o usuário apontou esse vão em um screenshot pedindo para
+    # o botão ocupar esse espaço. Os outros st.divider() da sidebar (entre
+    # grupos de filtros) foram mantidos, pois separam seções diferentes;
+    # este ficava só entre dois botões de ação, sem cumprir esse papel.
     if st.button("🗑️ Limpar filtros", width="stretch"):
         # Corrigido em 26/08/2026: a primeira versão deste botão só dava
         # ``st.session_state.pop(chave, None)`` nos widgets e chamava
