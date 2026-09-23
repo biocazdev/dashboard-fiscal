@@ -1078,6 +1078,15 @@ with st.sidebar:
     def _chave_filtro(nome: str) -> str:
         return f"{nome}_{_reset_seq}"
 
+    # Placeholder do filtro de Período: reservado aqui (antes de Empresa),
+    # na ordem em que o usuário pediu para aparecer na tela (23/09/2026),
+    # mas só é preenchido mais abaixo - depois de já sabermos a(s) filial(is)
+    # selecionada(s), pois o intervalo de datas disponível no banco depende
+    # delas. Um st.container() permite isso: a POSIÇÃO na sidebar é a deste
+    # ponto do código (antes de Empresa/Filial/...), só o preenchimento do
+    # conteúdo acontece depois.
+    _periodo_container = st.container()
+
     # Empresa (seção 31)
     try:
         empresas = _empresas_cached()
@@ -1231,7 +1240,7 @@ with st.sidebar:
         data_min_db = data_max_db = None
 
     if data_min_db and data_max_db:
-        st.caption(
+        _periodo_caption = (
             f"Período disponível no banco: "
             f"{data_brasil(data_min_db)} a {data_brasil(data_max_db)}"
         )
@@ -1239,6 +1248,7 @@ with st.sidebar:
         data_inicial_padrao = min(data_min_db, hoje)
         data_final_padrao = min(data_max_db, hoje)
     else:
+        _periodo_caption = None
         data_inicial_padrao = hoje.replace(year=hoje.year - 1)
         data_final_padrao = hoje
 
@@ -1260,21 +1270,26 @@ with st.sidebar:
             if (_chk_min is not None and _val < _chk_min) or _val > _chk_max:
                 st.session_state[_chave] = _padrao
 
-    data_inicial = st.date_input(
-        "Data inicial",
-        value=data_inicial_padrao,
-        max_value=hoje,
-        format="DD/MM/YYYY",
-        key=_chave_filtro("data_inicial"),
-    )
-    data_final = st.date_input(
-        "Data final",
-        value=data_final_padrao,
-        min_value=data_inicial,
-        max_value=hoje,
-        format="DD/MM/YYYY",
-        key=_chave_filtro("data_final"),
-    )
+    # Preenche o placeholder reservado no topo da sidebar (antes de
+    # Empresa) - ver comentário em "_periodo_container" acima.
+    with _periodo_container:
+        if _periodo_caption:
+            st.caption(_periodo_caption)
+        data_inicial = st.date_input(
+            "Data inicial",
+            value=data_inicial_padrao,
+            max_value=hoje,
+            format="DD/MM/YYYY",
+            key=_chave_filtro("data_inicial"),
+        )
+        data_final = st.date_input(
+            "Data final",
+            value=data_final_padrao,
+            min_value=data_inicial,
+            max_value=hoje,
+            format="DD/MM/YYYY",
+            key=_chave_filtro("data_final"),
+        )
 
     atualizar = st.button("Atualizar", type="primary", width="stretch")
 
